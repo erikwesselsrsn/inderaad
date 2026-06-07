@@ -520,12 +520,14 @@ body { font-family: 'Source Serif 4', Georgia, serif; background: var(--paper); 
 // via window.__RSP_CONFIG__ — zie hieronder.
 // Als dat niet werkt (lokaal), gebruik je .env
 
+// Credentials worden geladen via /api/config (Netlify Function)
+// zodat geen enkele sleutel hardcoded in de HTML staat
 const CFG = window.__RSP_CONFIG__ || {};
 
-const SUPABASE_URL     = CFG.supabaseUrl     || '';
-const SUPABASE_ANON    = CFG.supabaseAnon    || '';
-const FIREBASE_URL     = CFG.firebaseUrl     || '';
-const FIREBASE_API_KEY = CFG.firebaseApiKey  || '';
+let SUPABASE_URL     = CFG.supabaseUrl     || '';
+let SUPABASE_ANON    = CFG.supabaseAnon    || '';
+let FIREBASE_URL     = CFG.firebaseUrl     || '';
+let FIREBASE_API_KEY = CFG.firebaseApiKey  || '';
 
 // ══════════════════════════════════════════════════════
 // DATA
@@ -555,7 +557,7 @@ const MAANDEN = ['jan','feb','mrt','apr','mei','jun','jul','aug','sep','okt','no
 // ══════════════════════════════════════════════════════
 // STATE
 // ══════════════════════════════════════════════════════
-let supabase = null;
+let supabaseClient = null;
 let supabaseSession = null;
 let db = null;
 let gameCode = '';
@@ -579,6 +581,20 @@ async function init() {
   // Bouw auth council bar
   buildAuthCouncilBar();
 
+  // Haal config op via Netlify Function als die nog niet geïnjecteerd is
+  if (!SUPABASE_URL || !SUPABASE_ANON) {
+    try {
+      const cfgRes = await fetch('/api/config');
+      if (cfgRes.ok) {
+        const cfg = await cfgRes.json();
+        SUPABASE_URL     = cfg.supabaseUrl     || '';
+        SUPABASE_ANON    = cfg.supabaseAnon    || '';
+        FIREBASE_URL     = cfg.firebaseUrl     || '';
+        FIREBASE_API_KEY = cfg.firebaseApiKey  || '';
+      }
+    } catch(e) { console.warn('Config ophalen mislukt:', e); }
+  }
+
   if (!SUPABASE_URL || !SUPABASE_ANON) {
     document.getElementById('loading-overlay').classList.add('hidden');
     showAuthError('Configuratie ontbreekt. Controleer de Netlify environment variables.');
@@ -586,10 +602,10 @@ async function init() {
     return;
   }
 
-  supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON);
+  supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON);
 
   // Luister naar auth state changes
-  supabase.auth.onAuthStateChange(async (event, session) => {
+  supabaseClient.auth.onAuthStateChange(async (event, session) => {
     supabaseSession = session;
     if (session) {
       await initFirebaseAndGame(session);
@@ -600,7 +616,7 @@ async function init() {
   });
 
   // Haal huidige sessie op
-  const { data: { session } } = await supabase.auth.getSession();
+  const { data: { session } } = await supabaseClient.auth.getSession();
   if (!session) {
     document.getElementById('loading-overlay').classList.add('hidden');
     showScreen('screen-auth');
@@ -684,7 +700,7 @@ async function doLogin() {
   const btn = document.getElementById('btn-login');
   btn.disabled = true; btn.textContent = 'Bezig…';
 
-  const { error } = await supabase.auth.signInWithPassword({ email, password });
+  const { error } = await supabaseClient.auth.signInWithPassword({ email, password });
   btn.disabled = false; btn.textContent = 'Inloggen →';
 
   if (error) showAuthError(error.message);
@@ -694,7 +710,7 @@ async function doMagicLink() {
   const email = document.getElementById('login-email').value.trim();
   if (!email) { showAuthError('Vul eerst je e-mailadres in.'); return; }
 
-  const { error } = await supabase.auth.signInWithOtp({ email, options: { emailRedirectTo: window.location.href } });
+  const { error } = await supabaseClient.auth.signInWithOtp({ email, options: { emailRedirectTo: window.location.href } });
   if (error) showAuthError(error.message);
   else showAuthSuccess('Controleer je inbox — we hebben een inloglink gestuurd.');
 }
@@ -710,7 +726,7 @@ async function doRegister() {
   const btn = document.getElementById('btn-register');
   btn.disabled = true; btn.textContent = 'Bezig…';
 
-  const { error } = await supabase.auth.signUp({
+  const { error } = await supabaseClient.auth.signUp({
     email, password,
     options: { data: { full_name: name } }
   });
@@ -721,7 +737,7 @@ async function doRegister() {
 }
 
 async function doSignOut() {
-  await supabase.auth.signOut();
+  await supabaseClient.auth.signOut();
   sessionStorage.removeItem('rsp_session');
   location.reload();
 }
