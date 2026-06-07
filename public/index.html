@@ -259,7 +259,79 @@ body { font-family: 'Source Serif 4', Georgia, serif; background: var(--paper); 
 .option-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 .option-btn .opt-num { font-family: 'JetBrains Mono', monospace; font-size: 10px; color: var(--ink-3); margin-right: 8px; }
 
-.not-your-turn-notice { background: var(--paper-2); border: 1px solid var(--border); border-radius: 2px; padding: 0.75rem 1rem; font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--ink-3); text-align: center; margin: 0.5rem 0; }
+/* ── BEURT PANEL ── */
+.turn-panel { margin: 0 1.25rem 0.5rem; border-radius: 3px; overflow: hidden; border: 1px solid var(--border); }
+
+.turn-panel-mine {
+  background: linear-gradient(135deg, #1C1C1C 0%, #2d1a10 100%);
+  border-color: var(--accent);
+  animation: pulsePanel 2.5s ease-in-out infinite;
+}
+@keyframes pulsePanel {
+  0%,100% { box-shadow: 0 0 0 0 rgba(139,58,30,0); }
+  50%      { box-shadow: 0 0 0 6px rgba(139,58,30,0.18); }
+}
+
+.turn-panel-waiting { background: var(--paper-2); }
+
+.turn-banner {
+  display: flex; align-items: center; gap: 12px;
+  padding: 0.9rem 1.25rem;
+}
+.turn-banner-icon { font-size: 20px; flex-shrink: 0; }
+.turn-banner-text { flex: 1; }
+.turn-banner-title {
+  font-family: 'JetBrains Mono', monospace; font-size: 11px;
+  letter-spacing: 0.12em; text-transform: uppercase; font-weight: 500;
+}
+.turn-panel-mine .turn-banner-title { color: var(--accent-2); }
+.turn-panel-waiting .turn-banner-title { color: var(--ink-3); }
+.turn-banner-sub {
+  font-family: 'Source Serif 4', serif; font-size: 13px; margin-top: 2px;
+}
+.turn-panel-mine .turn-banner-sub { color: rgba(244,241,234,0.85); }
+.turn-panel-waiting .turn-banner-sub { color: var(--ink-2); }
+
+/* Wachtrij */
+.turn-queue {
+  display: flex; border-top: 1px solid rgba(255,255,255,0.08);
+  overflow-x: auto;
+}
+.turn-panel-waiting .turn-queue { border-top-color: var(--border); }
+
+.tq-item {
+  flex: 1; min-width: 80px; display: flex; flex-direction: column;
+  align-items: center; padding: 8px 10px; gap: 4px;
+  border-right: 1px solid rgba(255,255,255,0.06);
+  position: relative;
+}
+.turn-panel-waiting .tq-item { border-right-color: var(--border); }
+.tq-item:last-child { border-right: none; }
+
+.tq-item.tq-active { background: rgba(139,58,30,0.25); }
+.tq-item.tq-me { background: rgba(43,92,58,0.15); }
+.turn-panel-waiting .tq-item.tq-active { background: rgba(196,98,26,0.12); }
+
+.tq-dot { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; }
+.tq-name {
+  font-family: 'JetBrains Mono', monospace; font-size: 9px;
+  letter-spacing: 0.06em; text-transform: uppercase;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  max-width: 80px;
+}
+.turn-panel-mine .tq-name { color: rgba(244,241,234,0.6); }
+.turn-panel-waiting .tq-name { color: var(--ink-3); }
+.tq-item.tq-active .tq-name { color: var(--accent-2); font-weight: 500; }
+.tq-item.tq-me .tq-name { color: #6aba87; font-weight: 500; }
+
+.tq-badge {
+  font-family: 'JetBrains Mono', monospace; font-size: 8px;
+  padding: 1px 5px; border-radius: 2px; letter-spacing: 0.06em;
+}
+.tq-badge-active { background: var(--accent); color: #fff; }
+.tq-badge-me { background: var(--success); color: #fff; }
+.tq-badge-next { background: rgba(255,255,255,0.1); color: rgba(244,241,234,0.5); }
+.turn-panel-waiting .tq-badge-next { background: var(--paper-3); color: var(--ink-3); }
 
 .game-input-area { border-top: 1px solid var(--border); padding: 0.85rem 1.25rem; background: var(--paper-2); display: flex; gap: 10px; align-items: flex-end; position: sticky; bottom: 0; z-index: 10; }
 .game-input { flex: 1; padding: 9px 13px; font-family: 'Source Serif 4', Georgia, serif; font-size: 13px; background: #fff; border: 1px solid var(--border); border-radius: 2px; color: var(--ink); outline: none; resize: none; min-height: 40px; max-height: 100px; transition: border-color 0.2s; line-height: 1.5; }
@@ -501,7 +573,7 @@ body { font-family: 'Source Serif 4', Georgia, serif; background: var(--paper); 
   <div class="game-main">
     <div class="narrative-feed" id="narrative-feed"></div>
     <div class="typing-indicator" id="typing-indicator"><div class="typing-dots"><div class="typing-dot"></div><div class="typing-dot"></div><div class="typing-dot"></div></div></div>
-    <div id="turn-notice" class="not-your-turn-notice" style="display:none;margin:0 1.25rem;"></div>
+    <div id="turn-panel" style="display:none;"></div>
     <div id="stuck-notice" style="display:none;text-align:center;padding:0.5rem 1.25rem;">
       <button class="btn-ghost" style="font-size:10px;" onclick="forceUnstuck()">⚠️ Beurt lijkt vastgelopen — klik hier om door te geven</button>
     </div>
@@ -808,6 +880,9 @@ function subscribeToGame() {
   db.ref('games/' + gameCode + '/sharedState').on('value', snap => {
     if (snap.val()) { sharedState = snap.val(); updateTermDisplay(); }
   });
+  db.ref('games/' + gameCode + '/turnOrder').on('value', snap => {
+    if (snap.val()) window._turnOrder = snap.val();
+  });
   db.ref('games/' + gameCode + '/currentTurn').on('value', snap => {
     currentTurnPlayerId = snap.val(); updateTurnUI();
   });
@@ -1014,30 +1089,121 @@ let stuckTurnHandle = null;
 
 function updateTurnUI() {
   const isMyTurn = currentTurnPlayerId === playerId;
+  // Paginatitel knipperen als het jouw beurt wordt
+  if (isMyTurn && document.hidden) {
+    let flash = 0;
+    const orig = document.title;
+    const iv = setInterval(() => {
+      document.title = flash++ % 2 === 0 ? '🎙️ Jouw beurt! — Raadsspel' : orig;
+      if (flash > 8) { clearInterval(iv); document.title = orig; }
+    }, 700);
+  }
   const input = document.getElementById('game-input');
   const sendBtn = document.getElementById('send-btn');
-  const notice = document.getElementById('turn-notice');
+  const panel = document.getElementById('turn-panel');
   const stuckNotice = document.getElementById('stuck-notice');
 
   document.querySelectorAll('.option-btn').forEach(btn => { btn.disabled = !isMyTurn; });
+
+  // Bouw beurt-panel op
+  renderTurnPanel(isMyTurn);
 
   if (isMyTurn) {
     input.disabled = false;
     input.placeholder = 'Jouw beurt — beschrijf je actie…';
     sendBtn.disabled = false;
-    notice.style.display = 'none';
     if (stuckNotice) stuckNotice.style.display = 'none';
     clearTimeout(stuckTurnHandle);
   } else {
-    input.disabled = true; sendBtn.disabled = true;
-    notice.style.display = 'block';
-    const tp = allPlayers[currentTurnPlayerId];
-    const tparty = tp ? PARTIES.find(p=>p.id===tp.partyId) : null;
-    notice.textContent = '⏳ ' + (tp ? `${tp.name} (${tparty?tparty.name:'?'}) is aan de beurt` : 'Wachten op volgende speler…');
+    input.disabled = true;
+    input.placeholder = 'Wachten op andere speler…';
+    sendBtn.disabled = true;
     clearTimeout(stuckTurnHandle);
-    stuckTurnHandle = setTimeout(() => { if (stuckNotice) stuckNotice.style.display='block'; }, 90000);
+    stuckTurnHandle = setTimeout(() => {
+      if (stuckNotice) stuckNotice.style.display = 'block';
+    }, 90000);
   }
   updateHeaderPlayers(); updateSidebarPlayers();
+}
+
+function renderTurnPanel(isMyTurn) {
+  const panel = document.getElementById('turn-panel');
+  if (!panel) return;
+
+  // Haal stabiele beurt-volgorde op uit allPlayers + currentTurnPlayerId
+  // Gebruik turnOrderCache als beschikbaar, anders volgorde uit allPlayers
+  const playerList = Object.values(allPlayers);
+  if (playerList.length === 0) { panel.style.display = 'none'; return; }
+  panel.style.display = 'block';
+
+  const turnPlayer = allPlayers[currentTurnPlayerId];
+  const turnParty = turnPlayer ? PARTIES.find(p => p.id === turnPlayer.partyId) : null;
+
+  // Bereken wie "next" is op basis van turnOrderCache
+  const order = window._turnOrder || Object.keys(allPlayers);
+  const currIdx = order.indexOf(currentTurnPlayerId);
+  const nextIdx = (currIdx + 1) % order.length;
+  const nextId = order[nextIdx];
+
+  if (isMyTurn) {
+    // Jouw beurt — donker, pulsend
+    panel.className = 'turn-panel turn-panel-mine';
+    panel.innerHTML =
+      '<div class="turn-banner">' +
+        '<div class="turn-banner-icon">🎙️</div>' +
+        '<div class="turn-banner-text">' +
+          '<div class="turn-banner-title">Jouw beurt</div>' +
+          '<div class="turn-banner-sub">Kies een actie of typ je zet hieronder</div>' +
+        '</div>' +
+      '</div>' +
+      buildQueueHTML(order, isMyTurn);
+  } else {
+    // Wachten — rustig, informatief
+    const name = turnPlayer ? turnPlayer.name : 'Onbekende speler';
+    const party = turnParty ? turnParty.name : '?';
+    panel.className = 'turn-panel turn-panel-waiting';
+    panel.innerHTML =
+      '<div class="turn-banner">' +
+        '<div class="turn-banner-icon">⏳</div>' +
+        '<div class="turn-banner-text">' +
+          '<div class="turn-banner-title">Wachten</div>' +
+          '<div class="turn-banner-sub">' + name + ' (' + party + ') is aan de beurt</div>' +
+        '</div>' +
+      '</div>' +
+      buildQueueHTML(order, isMyTurn);
+  }
+}
+
+function buildQueueHTML(order, isMyTurn) {
+  if (order.length <= 1) return '';
+  const currIdx = order.indexOf(currentTurnPlayerId);
+  let html = '<div class="turn-queue">';
+  order.forEach((pid, i) => {
+    const pl = allPlayers[pid];
+    if (!pl) return;
+    const party = PARTIES.find(p => p.id === pl.partyId);
+    const color = party ? party.color : '#888';
+    const isActive = pid === currentTurnPlayerId;
+    const isMe = pid === playerId;
+    // Bereken positie relatief aan huidige speler
+    const stepsAway = ((i - currIdx) + order.length) % order.length;
+    let badge = '';
+    if (isActive) badge = '<span class="tq-badge tq-badge-active">Nu</span>';
+    else if (stepsAway === 1) badge = '<span class="tq-badge tq-badge-next">Volgende</span>';
+    else if (isMe) badge = '<span class="tq-badge tq-badge-me">Jij</span>';
+    else badge = '<span class="tq-badge tq-badge-next">' + stepsAway + ' beurten</span>';
+
+    const cls = 'tq-item' + (isActive ? ' tq-active' : '') + (isMe ? ' tq-me' : '');
+    const shortName = pl.name.split(' ')[0]; // Voornaam voor compactheid
+    html +=
+      '<div class="' + cls + '">' +
+        '<div class="tq-dot" style="background:' + color + '"></div>' +
+        '<div class="tq-name">' + shortName + '</div>' +
+        badge +
+      '</div>';
+  });
+  html += '</div>';
+  return html;
 }
 
 async function forceUnstuck() {
