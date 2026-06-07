@@ -1258,7 +1258,17 @@ function renderGMBlock(narrative, update) {
   let outHtml = '';
   if (update?.uitkomsten?.length) {
     outHtml = '<div class="nb-outcomes">'+
-      update.uitkomsten.map(u=>`<span class="outcome-chip ${u.type==='pos'?'pos':u.type==='neg'?'neg':''}">${u.label}</span>`).join('')+
+      update.uitkomsten
+        .filter(u => u && typeof u.label === 'string' && u.label.length < 120)
+        .map(u => {
+          // Verwijder eventuele JSON-resten uit het label
+          const cleanLabel = u.label
+            .replace(/[{}"\[\]]/g, '')
+            .replace(/^[a-z_]+:\s*/i, '')
+            .trim();
+          const cls = u.type==='pos'?'pos':u.type==='neg'?'neg':'';
+          return `<span class="outcome-chip ${cls}">${cleanLabel}</span>`;
+        }).join('')+
     '</div>';
   }
 
@@ -1344,7 +1354,9 @@ ${PARTIES.map(party => {
 COALITIE: SGP + CDA + Gemeentebelang (16 zetels, meerderheid)
 OPPOSITIE: ChristenUnie + FvD + VVD + PRO (9 zetels)
 
-COLLEGE VAN B&W: burgemeester is Jurgen van Houdt. Wethouders: Ben Beens, Bert Tijhof, René de Koff, Erik Wessels. Gemeentesecretaris: Rick Tukker. Gebruik NOOIT andere bestuursnamen.
+COLLEGE VAN B&W: burgemeester Jurgen van Houdt (onafhankelijk), wethouders Ben Beens (SGP), André Scheppink (SGP), Erik Wessels (CDA), Tijmen Traanman (Gemeentebelang). Gemeentesecretaris: Rick Tukker. Gebruik NOOIT andere namen voor college of secretaris.
+
+ROL VAN DE RAAD: de gemeenteraad bestuurt NIET — die controleert en kadert. De raad bespreekt het coalitieakkoord, stelt de begroting vast, en debatteert over beleid dat het college uitvoert. Portefeuilleverdeling binnen het college is GEEN raadsaangelegenheid en komt NOOIT ter sprake in een raadsvergadering. In de eerste vergaderingen staat het coalitieakkoord centraal — fracties reageren daarop vanuit hun eigen politieke positie.
 
 SPELREGELS
 - Meerdere spelers spelen elk hun eigen raadslid. Berichten worden gemarkeerd als [Naam – Partij].
