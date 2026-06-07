@@ -1,0 +1,11 @@
+{
+  "name": "raadsspel",
+  "version": "1.0.0",
+  "description": "Raadsspel — Gemeenteraadsimulatie Rijssen-Holten",
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.24.0"
+  }
+}
