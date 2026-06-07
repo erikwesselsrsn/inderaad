@@ -911,6 +911,77 @@ function subscribeToGame() {
       enterGameScreen();
     }
   });
+
+  // Server-authoritative countdown: lees turnStartedAt + turnDurationMs, toon resterende tijd
+  db.ref('games/' + gameCode + '/turnStartedAt').on('value', snap => {
+    if (!snap.val()) return;
+    startCountdown(snap.val());
+  });
+}
+
+let countdownInterval = null;
+let serverTimeOffset = 0; // compensatie voor clock-verschil client/server
+
+async function calibrateServerTime() {
+  // Gebruik Firebase .info/serverTimeOffset voor nauwkeurige tijdmeting
+  await new Promise(resolve => {
+    db.ref('.info/serverTimeOffset').once('value', snap => {
+      serverTimeOffset = snap.val() || 0;
+      resolve();
+    });
+  });
+}
+
+function serverNow() {
+  return Date.now() + serverTimeOffset;
+}
+
+function startCountdown(turnStartedAt) {
+  clearInterval(countdownInterval);
+  const el = document.getElementById('countdown-display');
+  if (!el) return;
+
+  countdownInterval = setInterval(async () => {
+    const durationSnap = await db.ref('games/'+gameCode+'/turnDurationMs').once('value');
+    const duration = durationSnap.val() || (5 * 60 * 1000);
+    const elapsed = serverNow() - turnStartedAt;
+    const remaining = Math.max(0, duration - elapsed);
+    const secs = Math.floor(remaining / 1000);
+    const mins = Math.floor(secs / 60);
+    const s = secs % 60;
+
+    if (el) {
+      el.textContent = mins + ':' + String(s).padStart(2, '0');
+      el.style.color = remaining < 60000 ? 'var(--accent)' : 'var(--ink-3)';
+      if (remaining < 30000) el.style.animation = 'pulsePanel 0.8s ease-in-out infinite';
+      else el.style.animation = '';
+    }
+
+    // Client detecteert verlopen beurt — eerste client die dit doet wint de transactie
+    if (remaining === 0 && currentTurnPlayerId !== playerId) {
+      clearInterval(countdownInterval);
+      await handleTurnTimeout();
+    }
+  }, 1000);
+}
+
+async function handleTurnTimeout() {
+  // Atomaire claim: alleen één client advance de beurt
+  const claimed = await claimTurnLock('timeout_' + currentTurnPlayerId);
+  if (!claimed) return; // andere client was sneller
+
+  broadcastSystemMsg('⏱️ Tijd verstreken — beurt van ' + (allPlayers[currentTurnPlayerId]?.name || '?') + ' overgeslagen.');
+
+  const orderSnap = await db.ref('games/'+gameCode+'/turnOrder').once('value');
+  const turnOrder = orderSnap.val() || Object.keys(allPlayers);
+  const nextIdx = (turnOrder.indexOf(currentTurnPlayerId) + 1) % turnOrder.length;
+
+  await db.ref('games/'+gameCode).update({
+    currentTurn: turnOrder[nextIdx],
+    turnLock: { holder: null, claimed: false },
+    turnStartedAt: firebase.database.ServerValue.TIMESTAMP,
+    lastActivity: firebase.database.ServerValue.TIMESTAMP
+  });
 }
 
 // ══════════════════════════════════════════════════════
@@ -1032,9 +1103,13 @@ async function hostStartGame() {
   const openingMsg = buildOpeningMsg();
 
   await db.ref('games/'+gameCode+'/conversationHistory').set([{ role:'user', content: openingMsg }]);
+  const BEURT_DUUR_MS = 5 * 60 * 1000; // 5 minuten per beurt
   await db.ref('games/'+gameCode+'/turnOrder').set(turnOrder);
   await db.ref('games/'+gameCode+'/currentTurn').set(firstTurn);
   await db.ref('games/'+gameCode+'/systemPrompt').set(systemMsg);
+  await db.ref('games/'+gameCode+'/turnDurationMs').set(BEURT_DUUR_MS);
+  await db.ref('games/'+gameCode+'/turnStartedAt').set(firebase.database.ServerValue.TIMESTAMP);
+  await db.ref('games/'+gameCode+'/lastActivity').set(firebase.database.ServerValue.TIMESTAMP);
   await db.ref('games/'+gameCode+'/status').set('playing');
 
   await callGMAndBroadcast(systemMsg, [{ role:'user', content: openingMsg }]);
@@ -1057,6 +1132,54 @@ function enterGameScreen() {
   sessionStorage.setItem('rsp_session', JSON.stringify({
     gameCode, playerId, playerName, selectedPartyId, replacedCouncillor, myStats, isHost
   }));
+  setupPresence();
+  calibrateServerTime();
+}
+
+function setupPresence() {
+  // Firebase onDisconnect: markeer speler als offline als verbinding wegvalt
+  const presenceRef = db.ref('games/'+gameCode+'/players/'+playerId+'/online');
+  const connectedRef = db.ref('.info/connected');
+
+  connectedRef.on('value', snap => {
+    if (!snap.val()) return;
+    // Schrijf 'online' en registreer wat er gebeurt bij disconnect
+    presenceRef.onDisconnect().set(false);
+    presenceRef.set(true);
+  });
+
+  // Monitor of de actieve speler offline gaat — geef beurt door na 30s
+  db.ref('games/'+gameCode+'/players').on('value', snap => {
+    const players = snap.val() || {};
+    const activePlayer = players[currentTurnPlayerId];
+    if (!activePlayer) return;
+    if (activePlayer.online === false && currentTurnPlayerId !== playerId) {
+      // Actieve speler is offline — start dropout-timer
+      if (!window._dropoutTimer) {
+        window._dropoutTimer = setTimeout(async () => {
+          window._dropoutTimer = null;
+          const claimed = await claimTurnLock('dropout_' + currentTurnPlayerId);
+          if (!claimed) return;
+          broadcastSystemMsg('📡 ' + (activePlayer.name||'Speler') + ' is offline — beurt overgeslagen.');
+          const orderSnap = await db.ref('games/'+gameCode+'/turnOrder').once('value');
+          const turnOrder = orderSnap.val() || Object.keys(allPlayers);
+          const nextIdx = (turnOrder.indexOf(currentTurnPlayerId) + 1) % turnOrder.length;
+          await db.ref('games/'+gameCode).update({
+            currentTurn: turnOrder[nextIdx],
+            turnLock: { holder: null, claimed: false },
+            turnStartedAt: firebase.database.ServerValue.TIMESTAMP,
+            lastActivity: firebase.database.ServerValue.TIMESTAMP
+          });
+        }, 30000); // 30 seconden wachten voor dropout-skip
+      }
+    } else {
+      // Speler terug online — annuleer dropout-timer
+      if (window._dropoutTimer) {
+        clearTimeout(window._dropoutTimer);
+        window._dropoutTimer = null;
+      }
+    }
+  });
 }
 
 async function tryRestoreSession() {
@@ -1072,6 +1195,8 @@ async function tryRestoreSession() {
     subscribeToGame(); buildMiniBar(); updateSidebarPlayers(); updateTermDisplay(); updateMyStats();
     showScreen('screen-game'); setupInputListeners();
     await db.ref('games/'+gameCode+'/players/'+playerId+'/online').set(true);
+    setupPresence();
+    calibrateServerTime();
     return true;
   } catch(e) { sessionStorage.removeItem('rsp_session'); return false; }
 }
@@ -1155,6 +1280,7 @@ function renderTurnPanel(isMyTurn) {
           '<div class="turn-banner-title">Jouw beurt</div>' +
           '<div class="turn-banner-sub">Kies een actie of typ je zet hieronder</div>' +
         '</div>' +
+        '<div class="turn-countdown" id="countdown-display" style="font-family:'JetBrains Mono',monospace;font-size:18px;font-weight:500;color:rgba(244,241,234,0.7);min-width:44px;text-align:right;">5:00</div>' +
       '</div>' +
       buildQueueHTML(order, isMyTurn);
   } else {
@@ -1169,6 +1295,7 @@ function renderTurnPanel(isMyTurn) {
           '<div class="turn-banner-title">Wachten</div>' +
           '<div class="turn-banner-sub">' + name + ' (' + party + ') is aan de beurt</div>' +
         '</div>' +
+        '<div class="turn-countdown" id="countdown-display" style="font-family:'JetBrains Mono',monospace;font-size:18px;font-weight:500;color:var(--ink-3);min-width:44px;text-align:right;">–:––</div>' +
       '</div>' +
       buildQueueHTML(order, isMyTurn);
   }
@@ -1207,12 +1334,23 @@ function buildQueueHTML(order, isMyTurn) {
 }
 
 async function forceUnstuck() {
+  const claimed = await claimTurnLock('manual_unstuck_' + playerId);
+  if (!claimed) { broadcastSystemMsg('Beurt is al in beweging.'); return; }
+
   const orderSnap = await db.ref('games/'+gameCode+'/turnOrder').once('value');
   const turnOrder = orderSnap.val() || Object.keys(allPlayers);
   const nextIdx = (turnOrder.indexOf(currentTurnPlayerId) + 1) % turnOrder.length;
-  await db.ref('games/'+gameCode+'/currentTurn').set(turnOrder[nextIdx]);
+
+  await db.ref('games/'+gameCode).update({
+    currentTurn: turnOrder[nextIdx],
+    turnLock: { holder: null, claimed: false },
+    turnStartedAt: firebase.database.ServerValue.TIMESTAMP,
+    lastActivity: firebase.database.ServerValue.TIMESTAMP
+  });
+
   broadcastSystemMsg('⏩ Beurt doorgegeven omdat de vorige speler te lang inactief was.');
-  document.getElementById('stuck-notice').style.display = 'none';
+  const stuckNotice = document.getElementById('stuck-notice');
+  if (stuckNotice) stuckNotice.style.display = 'none';
 }
 
 function updateHeaderPlayers() {
@@ -1272,11 +1410,35 @@ function chooseOption(idx) {
     sendAction(currentOptions[idx]);
 }
 
+// Atomaire claim: voorkomt dat twee clients tegelijk een beurt starten
+async function claimTurnLock(expectedHolder) {
+  const lockRef = db.ref('games/'+gameCode+'/turnLock');
+  return new Promise((resolve) => {
+    lockRef.transaction((current) => {
+      // Abort als al geclaimd door dezelfde beurt
+      if (current && current.holder === expectedHolder && current.claimed) return undefined;
+      return { holder: expectedHolder, claimed: true, claimedAt: Date.now() };
+    }, (err, committed) => resolve(committed));
+  });
+}
+
+async function releaseTurnLock() {
+  await db.ref('games/'+gameCode+'/turnLock').set({ holder: null, claimed: false });
+}
+
 async function sendAction(text) {
   if (currentTurnPlayerId !== playerId) return;
   const input = document.getElementById('game-input');
   const action = text || input.value.trim();
   if (!action) return;
+
+  // Claim de beurt atomair — voorkomt dubbele AI-calls bij race
+  const claimed = await claimTurnLock(playerId);
+  if (!claimed) {
+    broadcastSystemMsg('⚠️ Beurt al in behandeling — even geduld.');
+    return;
+  }
+
   input.value = ''; input.style.height = 'auto';
   currentOptions = [];
 
@@ -1376,15 +1538,25 @@ async function callGMAndBroadcast(systemPrompt, history) {
     if (history.length > 30) history = [history[0], ...history.slice(-29)];
     await db.ref('games/'+gameCode+'/conversationHistory').set(history);
 
+    // Beurt doorsturen pas NA succesvolle AI-call + schrijven
     if (update) {
       const orderSnap = await db.ref('games/'+gameCode+'/turnOrder').once('value');
       const turnOrder = orderSnap.val() || Object.keys(allPlayers);
       const nextIdx = (turnOrder.indexOf(currentTurnPlayerId) + 1) % turnOrder.length;
-      await db.ref('games/'+gameCode+'/currentTurn').set(turnOrder[nextIdx]);
+      // Schrijf nieuwe beurt + release lock atomair
+      await db.ref('games/'+gameCode).update({
+        currentTurn: turnOrder[nextIdx],
+        turnLock: { holder: null, claimed: false },
+        turnStartedAt: firebase.database.ServerValue.TIMESTAMP,
+        lastActivity: firebase.database.ServerValue.TIMESTAMP
+      });
+    } else {
+      await releaseTurnLock();
     }
 
   } catch(err) {
     broadcastSystemMsg('Verbindingsfout: ' + err.message);
+    await releaseTurnLock(); // altijd vrijgeven bij fout
   } finally {
     clearGMTimeout();
     setLoading(false);
