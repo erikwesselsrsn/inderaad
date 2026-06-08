@@ -671,11 +671,18 @@ async function init() {
   // Bouw auth council bar
   buildAuthCouncilBar();
 
-  // Veiligheidsnet: verberg loading overlay na 8 seconden, wat er ook gebeurt
+  // Veiligheidsnet: verberg loading overlay na 10 seconden, wat er ook gebeurt.
+  // Als er een ingelogde gebruiker is maar de brug hangt, toon dan de lobby
+  // (speler is immers wél ingelogd), anders het inlogscherm.
   const loadingGuard = setTimeout(() => {
     hideLoading();
-    showScreen('screen-auth');
-  }, 8000);
+    if (supabaseSession && playerName) {
+      document.getElementById('lobby-greeting').textContent = 'Welkom, ' + playerName + '.';
+      showScreen('screen-lobby');
+    } else {
+      showScreen('screen-auth');
+    }
+  }, 10000);
 
   // Haal config op via Netlify Function met timeout
   if (!SUPABASE_URL || !SUPABASE_ANON) {
@@ -705,8 +712,12 @@ async function init() {
   supabaseClient.auth.onAuthStateChange(async (event, session) => {
     supabaseSession = session;
     if (session) {
-      clearTimeout(loadingGuard);
-      await initFirebaseAndGame(session);
+      // Vangnet blijft actief TOT initFirebaseAndGame klaar is
+      try {
+        await initFirebaseAndGame(session);
+      } finally {
+        clearTimeout(loadingGuard);
+      }
     } else {
       clearTimeout(loadingGuard);
       hideLoading();
@@ -747,8 +758,15 @@ async function initFirebaseAndGame(session) {
     }
   }
 
+  // ── Stap 1b: Spelerstaat vast vroeg instellen (zodat vangnet het heeft) ──
+  playerName = session.user.user_metadata?.full_name || session.user.email.split('@')[0];
+  document.getElementById('user-bar-email').textContent = session.user.email;
+
   // ── Stap 2: Auth-brug — wissel Supabase JWT in voor Firebase custom token ──
-  // Dit is nodig zodat Firebase security rules "auth != null" werken
+  // Dit is nodig zodat Firebase security rules "auth != null" werken.
+  // BELANGRIJK: elke stap heeft een eigen timeout zodat de pagina nooit hangt.
+  const fallbackId = 'u_' + session.user.id.slice(0, 8);
+  playerId = fallbackId; // default; wordt overschreven bij succes
   try {
     const mintRes = await fetchWithTimeout('/api/firebase-token', {
       method: 'POST',
@@ -760,25 +778,21 @@ async function initFirebaseAndGame(session) {
 
     if (mintRes.ok) {
       const { firebaseToken, uid } = await mintRes.json();
-      // Authenticeer bij Firebase met het custom token
-      await firebase.auth().signInWithCustomToken(firebaseToken);
-      // Gebruik Firebase UID als stabiele speler-ID
-      playerId = uid;
+      // Authenticeer bij Firebase met eigen timeout (max 6s) zodat dit nooit blokkeert
+      await Promise.race([
+        firebase.auth().signInWithCustomToken(firebaseToken),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('Firebase login timeout')), 6000))
+      ]);
+      playerId = uid; // pas overschrijven na succesvolle login
     } else {
-      // Auth-brug mislukt — val terug op Supabase UID (werkt alleen met open rules)
       console.warn('[auth-bridge] mint mislukt:', mintRes.status, '— val terug op Supabase ID');
-      playerId = 'u_' + session.user.id.slice(0, 8);
     }
   } catch(e) {
     console.warn('[auth-bridge] fout:', e.message, '— val terug op Supabase ID');
-    playerId = 'u_' + session.user.id.slice(0, 8);
+    playerId = fallbackId; // expliciet terugzetten bij fout
   }
 
-  // ── Stap 3: Spelerstaat instellen ──
-  playerName = session.user.user_metadata?.full_name || session.user.email.split('@')[0];
-  document.getElementById('user-bar-email').textContent = session.user.email;
-
-  // ── Stap 4: Sessie herstellen of lobby tonen ──
+  // ── Stap 3: Sessie herstellen of lobby tonen ──
   hideLoading();
   const restored = await tryRestoreSession();
   if (!restored) {
