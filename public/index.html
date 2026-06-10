@@ -632,6 +632,7 @@ const MAANDEN = ['jan','feb','mrt','apr','mei','jun','jul','aug','sep','okt','no
 // ══════════════════════════════════════════════════════
 let supabaseClient = null;
 let supabaseSession = null;
+let firebaseAuthOk = false;
 let db = null;
 let gameCode = '';
 let isHost = false;
@@ -784,12 +785,15 @@ async function initFirebaseAndGame(session) {
         new Promise((_, reject) => setTimeout(() => reject(new Error('Firebase login timeout')), 6000))
       ]);
       playerId = uid; // pas overschrijven na succesvolle login
+      firebaseAuthOk = true;
+      console.log('[auth-bridge] ✓ Firebase login geslaagd, uid:', uid);
     } else {
-      console.warn('[auth-bridge] mint mislukt:', mintRes.status, '— val terug op Supabase ID');
+      const errBody = await mintRes.text();
+      console.error('[auth-bridge] mint mislukt:', mintRes.status, errBody);
     }
   } catch(e) {
-    console.warn('[auth-bridge] fout:', e.message, '— val terug op Supabase ID');
-    playerId = fallbackId; // expliciet terugzetten bij fout
+    console.error('[auth-bridge] fout:', e.message);
+    playerId = fallbackId;
   }
 
   // ── Stap 3: Sessie herstellen of lobby tonen ──
@@ -922,26 +926,47 @@ function generateCode() {
 }
 
 async function proceedFromLobby() {
-  if (lobbyMode === 'new') {
-    gameCode = generateCode();
-    isHost = true;
-    await db.ref('games/' + gameCode).set({
-      code: gameCode, host: playerId,
-      status: 'lobby',
-      sharedState: { jaar:2026, maand:4, week:1 },
-      currentTurn: null, messages: {}, players: {}
-    });
-  } else {
-    gameCode = document.getElementById('join-code-input').value.trim().toUpperCase();
-    isHost = false;
-    const snap = await db.ref('games/' + gameCode).once('value');
-    if (!snap.exists()) { alert('Spelcode niet gevonden. Controleer de code en probeer opnieuw.'); return; }
-    if (snap.val().status === 'playing') { alert('Dit spel is al gestart.'); return; }
+  const btn = document.getElementById('btn-lobby-next');
+  const originalText = btn ? btn.textContent : '';
+
+  // Controleer of Firebase-auth gelukt is — anders weigeren de rules elke schrijfactie
+  if (!firebaseAuthOk) {
+    alert('Verbinding met de spelserver is niet gelukt (Firebase-authenticatie). '
+        + 'Ververs de pagina (Ctrl+Shift+R) en log opnieuw in. '
+        + 'Blijft dit gebeuren, dan klopt de FIREBASE_SERVICE_ACCOUNT of SUPABASE_JWT_SECRET niet.');
+    return;
   }
-  buildCouncilBar('council-bar','council-legend');
-  buildMiniBar();
-  showScreen('screen-party');
-  subscribeToGame();
+
+  if (btn) { btn.disabled = true; btn.textContent = 'Bezig…'; }
+
+  try {
+    if (lobbyMode === 'new') {
+      gameCode = generateCode();
+      isHost = true;
+      await db.ref('games/' + gameCode).set({
+        code: gameCode, host: playerId,
+        status: 'lobby',
+        sharedState: { jaar:2026, maand:4, week:1 },
+        currentTurn: null, messages: {}, players: {}
+      });
+    } else {
+      gameCode = document.getElementById('join-code-input').value.trim().toUpperCase();
+      isHost = false;
+      const snap = await db.ref('games/' + gameCode).once('value');
+      if (!snap.exists()) { alert('Spelcode niet gevonden. Controleer de code en probeer opnieuw.'); return; }
+      if (snap.val().status === 'playing') { alert('Dit spel is al gestart.'); return; }
+    }
+    buildCouncilBar('council-bar','council-legend');
+    buildMiniBar();
+    showScreen('screen-party');
+    subscribeToGame();
+  } catch(err) {
+    console.error('[proceedFromLobby] Firebase fout:', err);
+    alert('Kon het spel niet aanmaken: ' + err.message
+        + '\n\nDit duidt meestal op een Firebase-rechtenprobleem.');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = originalText; }
+  }
 }
 
 // ══════════════════════════════════════════════════════
