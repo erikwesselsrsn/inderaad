@@ -271,6 +271,9 @@ body { font-family: 'Source Serif 4', Georgia, serif; background: var(--paper); 
 
 .nb-options { border-top: 1px solid var(--paper-2); margin-top: 0.6rem; padding-top: 0.6rem; }
 .nb-options-label { font-family: 'JetBrains Mono', monospace; font-size: 9px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink-3); margin-bottom: 7px; }
+.nb-options-waiting { opacity: 0.85; }
+.nb-options-waiting .nb-options-label { color: var(--accent-2); }
+.waiting-hint { font-family: 'Source Serif 4', serif; font-size: 12px; font-style: italic; color: var(--ink-3); line-height: 1.5; padding: 4px 0; }
 .options-list { display: flex; flex-direction: column; gap: 5px; }
 .option-btn { text-align: left; background: var(--paper); border: 1px solid var(--border); border-radius: 2px; padding: 8px 12px; font-family: 'Source Serif 4', Georgia, serif; font-size: 13px; color: var(--ink-2); cursor: pointer; transition: all 0.15s; line-height: 1.4; }
 .option-btn:hover { background: #fff; border-color: var(--accent-2); color: var(--ink); }
@@ -1029,11 +1032,7 @@ function subscribeToGame() {
   db.ref('games/' + gameCode + '/currentOptions').on('value', snap => {
     if (snap.val()) {
       currentOptions = snap.val();
-      const lastGM = document.querySelector('#narrative-feed .narrative-block.gm:last-child .nb-options');
-      if (lastGM) {
-        const isMyTurn = currentTurnPlayerId === playerId;
-        lastGM.querySelectorAll('.option-btn').forEach(btn => { btn.disabled = !isMyTurn; });
-      }
+      rebuildLastOptions();
     }
   });
   db.ref('games/' + gameCode + '/status').on('value', snap => {
@@ -1087,6 +1086,18 @@ function startCountdown(turnStartedAt) {
       else el.style.animation = '';
     }
 
+    // Zachte nudge bij 30s resterend — herinnering binnen de fictie, géén straf
+    if (remaining > 0 && remaining < 30000 && !window._nudgeSent) {
+      window._nudgeSent = true;
+      // Alleen één client stuurt de nudge (de eerste die de lock claimt)
+      const nudgeClaim = await claimTurnLock('nudge_' + currentTurnPlayerId);
+      if (nudgeClaim) {
+        await broadcastSystemMsg('De burgemeester schraapt zijn keel en kijkt richting ' + (allPlayers[currentTurnPlayerId]?.name || 'de spreker') + '…');
+        await releaseTurnLock();
+      }
+    }
+    if (remaining > 30000) window._nudgeSent = false; // reset voor volgende beurt
+
     // Client detecteert verlopen beurt — eerste client die dit doet wint de transactie
     if (remaining === 0 && currentTurnPlayerId !== playerId) {
       clearInterval(countdownInterval);
@@ -1100,7 +1111,7 @@ async function handleTurnTimeout() {
   const claimed = await claimTurnLock('timeout_' + currentTurnPlayerId);
   if (!claimed) return; // andere client was sneller
 
-  broadcastSystemMsg('⏱️ Tijd verstreken — beurt van ' + (allPlayers[currentTurnPlayerId]?.name || '?') + ' overgeslagen.');
+  broadcastSystemMsg('De voorzitter geeft het woord door: ' + (allPlayers[currentTurnPlayerId]?.name || 'de spreker') + ' kan later weer aanhaken.');
 
   const orderSnap = await db.ref('games/'+gameCode+'/turnOrder').once('value');
   const turnOrder = orderSnap.val() || Object.keys(allPlayers);
@@ -1426,6 +1437,9 @@ function updateTurnUI() {
 
   // Bouw beurt-panel op
   renderTurnPanel(isMyTurn);
+  // Herbouw opties zodat alleen de actieve speler klikbare knoppen ziet
+  rebuildLastOptions();
+  window._nudgeSent = false; // nudge-vlag resetten bij nieuwe beurt
 
   if (isMyTurn) {
     input.disabled = false;
@@ -1599,6 +1613,28 @@ function setStat(id, val, color) {
 // ══════════════════════════════════════════════════════
 // ACTIES STUREN
 // ══════════════════════════════════════════════════════
+function rebuildLastOptions() {
+  // Herbouw het laatste optieblok wanneer de beurt wisselt:
+  // de nieuwe actieve speler krijgt klikbare knoppen, anderen een wachtweergave
+  const lastOptBlock = document.querySelector('#narrative-feed .narrative-block.gm:last-child .nb-options');
+  if (!lastOptBlock || !currentOptions.length) return;
+
+  const isMyTurn = currentTurnPlayerId === playerId;
+  if (isMyTurn) {
+    lastOptBlock.className = 'nb-options';
+    lastOptBlock.innerHTML = '<div class="nb-options-label">Wat doe je?</div><div class="options-list">' +
+      currentOptions.map((opt,i)=>`<button class="option-btn" onclick="chooseOption(${i})"><span class="opt-num">${i+1}.</span>${opt}</button>`).join('') +
+    '</div>';
+  } else {
+    const tp = allPlayers[currentTurnPlayerId];
+    const tparty = tp ? PARTIES.find(p=>p.id===tp.partyId) : null;
+    const wie = tp ? (tp.name + (tparty ? ' (' + tparty.name + ')' : '')) : 'de andere speler';
+    lastOptBlock.className = 'nb-options nb-options-waiting';
+    lastOptBlock.innerHTML = '<div class="nb-options-label">' + wie + ' is aan zet</div>' +
+      '<div class="waiting-hint">Bekijk de opties mee — straks ben jij aan de beurt. Je kunt alvast nadenken over je eigen zet.</div>';
+  }
+}
+
 function chooseOption(idx) {
   if (idx >= 0 && idx < currentOptions.length && currentTurnPlayerId === playerId)
     sendAction(currentOptions[idx]);
@@ -1629,7 +1665,7 @@ async function sendAction(text) {
   // Claim de beurt atomair — voorkomt dubbele AI-calls bij race
   const claimed = await claimTurnLock(playerId);
   if (!claimed) {
-    broadcastSystemMsg('⚠️ Beurt al in behandeling — even geduld.');
+    broadcastSystemMsg('De burgemeester heft zijn hand: "Een moment nog — we ronden eerst de vorige spreker af."');
     return;
   }
 
@@ -1809,9 +1845,21 @@ function renderGMBlock(narrative, update) {
     currentOptions = [...update.opties];
     db.ref('games/'+gameCode+'/currentOptions').set(currentOptions);
     const isMyTurn = currentTurnPlayerId === playerId;
-    optHtml = '<div class="nb-options"><div class="nb-options-label">Wat doe je?</div><div class="options-list">'+
-      update.opties.map((opt,i)=>`<button class="option-btn" onclick="chooseOption(${i})" ${isMyTurn?'':'disabled'}><span class="opt-num">${i+1}.</span>${opt}</button>`).join('')+
-    '</div></div>';
+    if (isMyTurn) {
+      // Alleen de speler die aan de beurt is ziet klikbare opties
+      optHtml = '<div class="nb-options"><div class="nb-options-label">Wat doe je?</div><div class="options-list">'+
+        update.opties.map((opt,i)=>`<button class="option-btn" onclick="chooseOption(${i})"><span class="opt-num">${i+1}.</span>${opt}</button>`).join('')+
+      '</div></div>';
+    } else {
+      // Wachtende spelers zien GEEN klikbare opties — voorkomt verkeerde klikken
+      const tp = allPlayers[currentTurnPlayerId];
+      const tparty = tp ? PARTIES.find(p=>p.id===tp.partyId) : null;
+      const wie = tp ? (tp.name + (tparty ? ' (' + tparty.name + ')' : '')) : 'de andere speler';
+      optHtml = '<div class="nb-options nb-options-waiting">' +
+        '<div class="nb-options-label">' + wie + ' is aan zet</div>' +
+        '<div class="waiting-hint">Bekijk de opties mee — straks ben jij aan de beurt. Je kunt alvast nadenken over je eigen zet.</div>' +
+      '</div>';
+    }
   }
 
   block.innerHTML =
@@ -1896,10 +1944,27 @@ SPELREGELS
 - Spelers handelen om beurten. De actieve speler is degene die net een bericht stuurde.
 - Geef narratief dat alle spelers kunnen lezen, maar maak duidelijk op wie de actie betrekking heeft.
 
+KRITIEKE CONSISTENTIEREGEL (naam-validatie):
+- De 4 ACTIEOPTIES zijn ALTIJD bedoeld voor de speler die zojuist handelde (de actieve speler).
+- Noem in je narratief NOOIT dat het "de beurt van speler X" is en geef dan opties voor speler Y. Dat is verboden.
+- Schrijf de opties in de ik/jij-vorm vanuit de actieve speler. Verwijs er niet naar een andere speler bij naam in de opties.
+- Controleer vóór je antwoordt: passen de 4 opties bij de naam van de actieve speler? Zo nee, herschrijf ze.
+
+ONBOARDING (eerste 3 beurten — voorkom cognitieve overload):
+- Beurt 1: introduceer ALLEEN de actieve speler en zijn/haar directe situatie. Maximaal één tegenspeler noemen. Geen volledige zetelverdeling, geen 6 collegenamen tegelijk. Eindig met één duidelijke keuze (4 opties).
+- Beurt 2-3: introduceer geleidelijk meer raadsleden en context, alleen wanneer ze relevant worden.
+- Pas vanaf beurt 4 mag je de volledige politieke complexiteit (coalitie-dynamiek, meerdere fracties) laten meespelen.
+- Introduceer namen pas op het moment dat ze er werkelijk toe doen, niet als opsomming vooraf.
+
 Na elke speleractie geef je:
-1. NARRATIEF: maximaal 2 korte alinea's (elk max. 3 zinnen) — to the point
+1. NARRATIEF: maximaal 2 korte alinea's (elk max. 3 zinnen) — to the point, vlot leesbaar voor een 16-jarige
 2. JSON-blok met updates
 3. Precies 4 korte ACTIEOPTIES voor de actieve speler
+
+TAAL & SPELLING:
+- Schrijf correct, natuurlijk Nederlands. Geen verzonnen of verkeerd gespelde woorden.
+- Vermijd geforceerde samenstellingen. Gebruik "persbericht" (niet "persberichte"), "oppositie sluit een verbond" (niet "oppositiealliëering"), enzovoort.
+- Bij twijfel: kies de eenvoudige, gangbare formulering.
 
 VERPLICHT JSON-FORMAAT:
 <GAME_UPDATE>
