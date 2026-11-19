@@ -151,3 +151,38 @@ Browser
 De Anthropic API key verlaat **nooit** de server. De browser stuurt alleen zijn  
 Supabase JWT mee als autorisatie, de Netlify Function controleert dit en roept  
 Claude aan met de server-side key.
+
+---
+
+# Singleplayer-variant (NPC-fracties)
+
+Eén leerling speelt één fractie; de andere zes fracties worden gespeeld door
+Claude (Anthropic API). Gebouwd volgens het architectuurvoorstel
+"AI-NPC-fracties", scenario 2 (middenweg). Staat volledig los van de
+Firebase-multiplayerstate; deelt alleen Supabase-auth, `/api/config` en de
+huisstijl. Te openen via de lobby (kaart "Singleplayer") of `/singleplayer`.
+
+Zie [`docs/singleplayer.md`](docs/singleplayer.md) voor architectuur, kosten en
+beheer. Kort:
+
+## Extra installatie
+
+1. **Supabase-migraties uitvoeren** (SQL Editor of `supabase db push`), in volgorde:
+   - `supabase/migrations/20261119120000_singleplayer_npc_fracties.sql`
+   - `supabase/migrations/20261119120100_singleplayer_seed.sql`
+2. **Extra Netlify-variabele:**
+
+   | Variabele | Waarde |
+   |-----------|--------|
+   | `SUPABASE_SERVICE_ROLE_KEY` | Supabase → Project Settings → API → `service_role` (geheim! alleen in Netlify) |
+
+   Optioneel: `NPC_MODEL_PREMIUM`, `NPC_MODEL_ROUTINE`, `NPC_TIMEOUT_MS`,
+   `NPC_CACHE_TTL` (`1h`/`5m`), `ANTHROPIC_BETA`.
+3. Trigger een nieuwe deploy.
+
+## Tests
+
+```bash
+npm test                     # unit-tests (geen netwerk nodig)
+```
+Voor de end-to-end-test tegen een echte Postgres: zie `tests/README.md`.

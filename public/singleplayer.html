@@ -1,0 +1,673 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Raadsspel – Singleplayer</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,600;1,400&family=Source+Serif+4:ital,opsz,wght@0,8..60,300;0,8..60,400;1,8..60,300&family=JetBrains+Mono:wght@400;500&display=swap');
+:root {
+  --ink: #1C1C1C; --ink-2: #4A4A4A; --ink-3: #888;
+  --paper: #F4F1EA; --paper-2: #EAE6DC; --paper-3: #DDD8CC;
+  --accent: #8B3A1E; --accent-2: #C4621A; --success: #2B5C3A;
+  --border: #D0CAB8;
+}
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: 'Source Serif 4', Georgia, serif; background: var(--paper); color: var(--ink); min-height: 100vh; line-height: 1.6; }
+.mono { font-family: 'JetBrains Mono', monospace; }
+.topbar { background: var(--ink); color: var(--paper); padding: 0.7rem 1.5rem; display: flex; align-items: center; gap: 1rem; border-bottom: 2px solid var(--accent); flex-wrap: wrap; }
+.topbar .brand { font-family: 'Playfair Display', serif; font-size: 20px; }
+.topbar .sub { font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: .15em; text-transform: uppercase; color: rgba(244,241,234,.6); }
+.topbar .right { margin-left: auto; display: flex; gap: 12px; align-items: center; font-family: 'JetBrains Mono', monospace; font-size: 10px; }
+.topbar a, .topbar button { color: rgba(244,241,234,.75); background: none; border: 1px solid rgba(244,241,234,.25); padding: 3px 9px; border-radius: 2px; font: inherit; cursor: pointer; text-decoration: none; }
+.stepper { display: flex; gap: 0; border-bottom: 1px solid var(--border); background: var(--paper-2); overflow-x: auto; }
+.step { flex: 1; min-width: 110px; padding: 0.6rem 0.8rem; font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: .1em; text-transform: uppercase; color: var(--ink-3); border-right: 1px solid var(--border); text-align: center; }
+.step.done { color: var(--success); }
+.step.active { color: var(--paper); background: var(--accent); }
+.wrap { max-width: 860px; margin: 0 auto; padding: 2rem 1.25rem 5rem; }
+.screen { display: none; }
+.screen.active { display: block; animation: in .25s ease; }
+@keyframes in { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: none; } }
+h1 { font-family: 'Playfair Display', serif; font-weight: 400; font-size: clamp(26px, 4vw, 38px); line-height: 1.15; margin-bottom: .6rem; }
+h2 { font-family: 'Playfair Display', serif; font-weight: 400; font-size: 22px; margin: 1.5rem 0 .6rem; }
+.eyebrow { font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: .18em; text-transform: uppercase; color: var(--ink-3); margin-bottom: .5rem; }
+.lead { font-size: 16px; color: var(--ink-2); margin-bottom: 1.25rem; }
+.card { background: #fff; border: 1px solid var(--border); border-radius: 2px; padding: 1.1rem 1.3rem; margin-bottom: 1rem; }
+.card p + p { margin-top: .5rem; }
+ul.feiten { padding-left: 1.1rem; color: var(--ink-2); font-size: 14px; }
+ul.feiten li { margin-bottom: .3rem; }
+.opties { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 10px; }
+.optie { background: var(--paper); border: 1px solid var(--border); border-radius: 2px; padding: .8rem 1rem; font-size: 13px; color: var(--ink-2); }
+.optie b { display: block; color: var(--ink); font-weight: 600; margin-bottom: 3px; }
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 10px; margin-bottom: 1.25rem; }
+.keuze { background: #fff; border: 1.5px solid var(--border); border-radius: 2px; padding: .9rem 1rem; cursor: pointer; text-align: left; font: inherit; color: inherit; transition: border-color .15s; }
+.keuze:hover { border-color: var(--accent-2); }
+.keuze.selected { border-color: var(--accent); background: #FBF7F4; }
+.keuze .naam { font-family: 'Playfair Display', serif; font-size: 17px; display: flex; align-items: center; gap: 8px; }
+.keuze .meta { font-family: 'JetBrains Mono', monospace; font-size: 10px; color: var(--ink-3); letter-spacing: .05em; }
+.keuze .omschr { font-size: 13px; color: var(--ink-2); margin-top: 4px; }
+.dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; flex-shrink: 0; }
+.btn { font-family: 'JetBrains Mono', monospace; font-size: 11px; letter-spacing: .1em; text-transform: uppercase; padding: 10px 18px; border-radius: 2px; border: none; cursor: pointer; transition: background .15s; }
+.btn-primary { background: var(--accent); color: #fff; }
+.btn-primary:hover { background: #6B2A12; }
+.btn-ghost { background: transparent; color: var(--ink-2); border: 1px solid var(--border); }
+.btn:disabled { background: var(--paper-3); color: var(--ink-3); cursor: default; border-color: var(--paper-3); }
+.acties { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 1.25rem; align-items: center; }
+textarea, input[type=text] { width: 100%; padding: 10px 13px; font-family: 'Source Serif 4', Georgia, serif; font-size: 14px; background: #fff; border: 1px solid var(--border); border-radius: 2px; color: var(--ink); outline: none; resize: vertical; }
+textarea:focus, input[type=text]:focus { border-color: var(--accent); }
+.teller { font-family: 'JetBrains Mono', monospace; font-size: 10px; color: var(--ink-3); text-align: right; margin-top: 3px; }
+.seg { display: inline-flex; border: 1px solid var(--border); border-radius: 2px; overflow: hidden; margin-bottom: 1rem; }
+.seg button { padding: 9px 22px; background: #fff; border: none; font-family: 'JetBrains Mono', monospace; font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: var(--ink-2); cursor: pointer; }
+.seg button + button { border-left: 1px solid var(--border); }
+.seg button.on { background: var(--ink); color: var(--paper); }
+.fractie { border-left: 4px solid var(--ink-3); }
+.fractie-kop { display: flex; align-items: center; gap: 10px; margin-bottom: .5rem; flex-wrap: wrap; }
+.fractie-kop .naam { font-family: 'Playfair Display', serif; font-size: 18px; }
+.fractie-kop .meta { font-family: 'JetBrains Mono', monospace; font-size: 10px; color: var(--ink-3); }
+.badge { font-family: 'JetBrains Mono', monospace; font-size: 9px; letter-spacing: .12em; text-transform: uppercase; padding: 2px 7px; border-radius: 2px; margin-left: auto; }
+.b-voor { background: #E8F2EC; color: var(--success); }
+.b-tegen { background: #F5EDE8; color: var(--accent); }
+.b-twijfel { background: var(--paper-2); color: var(--ink-2); }
+.voorwaarde { font-size: 13px; color: var(--ink-2); font-style: italic; border-top: 1px dashed var(--paper-3); margin-top: .6rem; padding-top: .5rem; }
+.qa { margin-top: .7rem; display: flex; flex-direction: column; gap: 6px; }
+.qa .v { font-size: 13px; color: var(--success); }
+.qa .a { font-size: 14px; color: var(--ink-2); padding-left: .8rem; border-left: 2px solid var(--paper-3); }
+.vraagrij { display: flex; gap: 8px; margin-top: .7rem; }
+.vraagrij input { flex: 1; }
+.vraagrij .btn { padding: 8px 12px; font-size: 10px; flex-shrink: 0; }
+.gescript { font-family: 'JetBrains Mono', monospace; font-size: 9px; color: var(--ink-3); letter-spacing: .08em; }
+.laden { color: var(--ink-3); font-style: italic; font-size: 14px; }
+.melding { font-family: 'JetBrains Mono', monospace; font-size: 11px; padding: 10px 14px; border-radius: 2px; margin-bottom: 1rem; background: #FDF0EE; border: 1px solid #E8B4AA; color: #8B1A1A; display: none; }
+.melding.zichtbaar { display: block; }
+.chat { display: flex; flex-direction: column; gap: 8px; margin-bottom: 1rem; }
+.chat .ik { align-self: flex-end; max-width: 80%; background: #F7FBF8; border: 1px solid #C0DCC8; padding: .6rem .9rem; border-radius: 2px; font-size: 14px; }
+.chat .zij { max-width: 85%; background: #fff; border: 1px solid var(--border); padding: .6rem .9rem; border-radius: 2px; font-size: 14px; }
+.chat .zij .wie { font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: .08em; text-transform: uppercase; margin-bottom: 2px; }
+.akkoord-chip { font-family: 'JetBrains Mono', monospace; font-size: 10px; padding: 3px 8px; border-radius: 2px; border: 1px solid var(--border); background: var(--paper-2); }
+.akkoord-chip.ja { background: #E8F2EC; border-color: #C0DCC8; color: var(--success); }
+.akkoord-chip.nee { background: #F5EDE8; border-color: #E0C4B8; color: var(--accent); }
+.uitslagbalk { display: flex; height: 34px; border: 1px solid var(--border); border-radius: 2px; overflow: hidden; margin: .5rem 0; }
+.uitslagbalk div { height: 100%; }
+.uitslag-kop { font-family: 'Playfair Display', serif; font-size: 28px; margin-top: .5rem; }
+.stemrij { display: flex; gap: 10px; align-items: flex-start; padding: .6rem 0; border-bottom: 1px solid var(--paper-2); font-size: 14px; }
+.stemrij:last-child { border-bottom: none; }
+.stemrij .wie { width: 140px; flex-shrink: 0; font-family: 'JetBrains Mono', monospace; font-size: 11px; display: flex; gap: 6px; align-items: center; }
+.stemrij .stem { width: 60px; flex-shrink: 0; font-family: 'JetBrains Mono', monospace; font-size: 10px; text-transform: uppercase; letter-spacing: .1em; }
+.stemrij .verkl { color: var(--ink-2); }
+ol.reflectie { padding-left: 1.2rem; }
+ol.reflectie li { margin-bottom: .5rem; }
+.hint { font-size: 13px; color: var(--ink-3); font-style: italic; }
+@media (max-width: 640px) { .stemrij { flex-wrap: wrap; } .stemrij .wie { width: auto; } }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <span class="brand">Raadsspel</span>
+  <span class="sub">Singleplayer · Rijssen-Holten</span>
+  <div class="right">
+    <span id="gebruiker"></span>
+    <a href="/">Multiplayer</a>
+    <button id="btn-uitloggen" style="display:none">Uitloggen</button>
+  </div>
+</div>
+<div class="stepper" id="stepper" style="display:none">
+  <div class="step" data-fase="briefing">1 · Briefing</div>
+  <div class="step" data-fase="fractieoverleg">2 · Fractieoverleg</div>
+  <div class="step" data-fase="commissie">3 · Commissie</div>
+  <div class="step" data-fase="onderhandeling">4 · Onderhandeling</div>
+  <div class="step" data-fase="stemming">5 · Stemming</div>
+</div>
+
+<div class="wrap">
+  <div class="melding" id="melding"></div>
+
+  <!-- LADEN -->
+  <section class="screen active" id="s-laden"><p class="laden">Raadsspel wordt geladen…</p></section>
+
+  <!-- NIET INGELOGD -->
+  <section class="screen" id="s-login">
+    <p class="eyebrow">Singleplayer</p>
+    <h1>Log eerst in</h1>
+    <p class="lead">Je hebt een account nodig om te spelen. Log in op de startpagina en kom daarna terug.</p>
+    <a class="btn btn-primary" href="/" style="text-decoration:none;display:inline-block">Naar inloggen →</a>
+  </section>
+
+  <!-- START -->
+  <section class="screen" id="s-start">
+    <p class="eyebrow">Nieuw spel</p>
+    <h1>Jij tegen de rest van de raad</h1>
+    <p class="lead">Je speelt één fractie in de gemeenteraad. De andere fracties reageren op jou. Eén dossier, één lesuur: van briefing tot stemming.</p>
+    <div id="hervat-blok" style="display:none">
+      <h2>Verder spelen</h2>
+      <div class="grid" id="hervat-lijst"></div>
+    </div>
+    <h2>Kies een dossier</h2>
+    <div class="grid" id="dossier-lijst"></div>
+    <h2>Kies je fractie</h2>
+    <div class="grid" id="fractie-lijst"></div>
+    <div class="acties"><button class="btn btn-primary" id="btn-start" disabled>Spel starten →</button></div>
+  </section>
+
+  <!-- BRIEFING -->
+  <section class="screen" id="s-briefing">
+    <p class="eyebrow">Fase 1 — Briefing</p>
+    <h1 id="br-titel"></h1>
+    <p class="lead" id="br-pitch"></p>
+    <div class="card"><p class="eyebrow">Raadsvoorstel</p><p id="br-voorstel"></p></div>
+    <div class="card"><p class="eyebrow">Achtergrond</p><p id="br-context"></p></div>
+    <div class="card"><p class="eyebrow">Wat je moet weten</p><ul class="feiten" id="br-feiten"></ul></div>
+    <h2>Mogelijke richtingen</h2>
+    <div class="opties" id="br-opties"></div>
+    <div class="acties"><button class="btn btn-primary" id="btn-naar-fractieoverleg">Naar het fractieoverleg →</button></div>
+  </section>
+
+  <!-- FRACTIEOVERLEG -->
+  <section class="screen" id="s-fractieoverleg">
+    <p class="eyebrow">Fase 2 — Fractieoverleg</p>
+    <h1>Wat vindt jouw fractie?</h1>
+    <p class="lead" id="fo-intro"></p>
+    <div class="seg" id="fo-positie">
+      <button data-positie="voor">Voor het voorstel</button>
+      <button data-positie="tegen">Tegen het voorstel</button>
+    </div>
+    <label class="eyebrow" for="fo-inbreng" style="display:block">Jouw inbreng in de commissie</label>
+    <textarea id="fo-inbreng" rows="5" maxlength="600" placeholder="Bijvoorbeeld: welk punt vind je het belangrijkst, wat wil je veranderen en waarom?"></textarea>
+    <div class="teller"><span id="fo-teller">0</span>/600</div>
+    <p class="hint">Je inbreng is het eerste wat de andere fracties van je horen. Wees concreet: wat wil je, en wat heb je ervoor over?</p>
+    <div class="acties"><button class="btn btn-primary" id="btn-inbreng" disabled>Inbreng indienen →</button></div>
+  </section>
+
+  <!-- COMMISSIE -->
+  <section class="screen" id="s-commissie">
+    <p class="eyebrow">Fase 3 — Commissievergadering</p>
+    <h1>De andere fracties reageren</h1>
+    <p class="lead">Lees de standpunten. Je mag elke fractie <b>twee vragen</b> stellen. Let op wat een fractie nodig heeft om je te steunen.</p>
+    <div class="card fractie" id="cm-eigen"></div>
+    <div id="cm-fracties"></div>
+    <div class="acties">
+      <button class="btn btn-primary" id="btn-naar-onderhandeling" disabled>Onderhandelen (optioneel) →</button>
+      <button class="btn btn-ghost" id="btn-direct-stemming" disabled>Direct naar de stemming →</button>
+    </div>
+  </section>
+
+  <!-- ONDERHANDELING -->
+  <section class="screen" id="s-onderhandeling">
+    <p class="eyebrow">Fase 4 — Onderhandeling</p>
+    <h1>Steun zoeken</h1>
+    <p class="lead">Kies <b>één of twee fracties</b> om mee te onderhandelen. Je hebt <b>vier berichten</b>. Een fractie gaat alleen om als je haar iets concreets biedt.</p>
+    <div id="oh-kiezen">
+      <div class="grid" id="oh-fractiekeuze"></div>
+    </div>
+    <div id="oh-gesprek" style="display:none">
+      <div class="acties" id="oh-akkoord" style="margin:0 0 1rem"></div>
+      <div class="chat" id="oh-chat"></div>
+      <textarea id="oh-invoer" rows="3" maxlength="600" placeholder="Doe een voorstel…"></textarea>
+      <div class="teller"><span id="oh-over">4</span> berichten over</div>
+    </div>
+    <div class="acties">
+      <button class="btn btn-primary" id="btn-oh-stuur" disabled>Versturen</button>
+      <button class="btn btn-ghost" id="btn-naar-stemming">Naar de stemming →</button>
+    </div>
+  </section>
+
+  <!-- STEMMING -->
+  <section class="screen" id="s-stemming">
+    <p class="eyebrow">Fase 5 — Stemming in de raad</p>
+    <h1 id="st-titel">Hoe stemt jouw fractie?</h1>
+    <div id="st-kiezen">
+      <p class="lead">In de gemeenteraad kun je je niet van stemming onthouden: het is voor of tegen.</p>
+      <div class="seg" id="st-stem">
+        <button data-stem="voor">Voor</button>
+        <button data-stem="tegen">Tegen</button>
+      </div>
+      <div class="acties"><button class="btn btn-primary" id="btn-stem">Stemming openen →</button></div>
+    </div>
+    <div id="st-uitslag" style="display:none">
+      <div class="uitslag-kop" id="st-kop"></div>
+      <div class="uitslagbalk" id="st-balk"></div>
+      <p class="mono" style="font-size:11px;color:var(--ink-3)" id="st-cijfers"></p>
+      <h2>Stemverklaringen</h2>
+      <div class="card" id="st-verklaringen"></div>
+      <h2>Terugblik</h2>
+      <div class="card"><ol class="reflectie" id="st-reflectie"></ol></div>
+      <div class="acties"><button class="btn btn-primary" id="btn-opnieuw">Nieuw spel</button></div>
+    </div>
+  </section>
+</div>
+
+<script>
+'use strict';
+// ════════════════════════════════════════════════════════════
+// Raadsspel Singleplayer — frontend
+// Alle AI-calls lopen via /api/npc-fractie (één fractiebeurt per request).
+// Caps en budget worden server-side bewaakt; de UI toont ze alleen.
+// ════════════════════════════════════════════════════════════
+const FASEN = ['briefing', 'fractieoverleg', 'commissie', 'onderhandeling', 'stemming'];
+const st = {
+  sb: null, sessieAuth: null,
+  fracties: [], dossiers: [],
+  keuze: { dossier: null, fractie: null },
+  sessie: null, dossier: null,
+  berichten: [],
+  positie: null, stem: null,
+  ohKeuze: [],
+  bezig: new Set(),
+};
+
+// ── helpers ──
+const $ = id => document.getElementById(id);
+function esc(s) { return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
+function toon(id) { document.querySelectorAll('.screen').forEach(s => s.classList.toggle('active', s.id === id)); window.scrollTo(0, 0); }
+function melding(tekst) { const m = $('melding'); m.textContent = tekst || ''; m.classList.toggle('zichtbaar', !!tekst); if (tekst) window.scrollTo(0, 0); }
+function fractie(id) { return st.fracties.find(f => f.id === id) || { id, naam: id, kleur: '#888', zetels: 0 }; }
+function npcFracties() { return st.fracties.filter(f => f.id !== st.sessie?.speler_fractie); }
+function houdingBadge(h) { return h ? `<span class="badge b-${esc(h)}">${h === 'twijfel' ? 'twijfelt' : esc(h)}</span>` : ''; }
+
+const REDENEN = {
+  vragencap: 'Je hebt deze fractie al twee vragen gesteld.',
+  onderhandeling_cap: 'Je onderhandelingsberichten zijn op.',
+  dagcap: 'Je hebt vandaag het maximale aantal spellen gestart. Probeer het morgen opnieuw of vraag je docent.',
+  afgerond: 'Dit spel is al afgerond.',
+  geen_inbreng: 'Lever eerst je inbreng in het fractieoverleg.',
+};
+
+async function api(pad, body, timeoutMs = 25000) {
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    const { data: { session } } = await st.sb.auth.getSession();
+    const res = await fetch(pad, {
+      method: 'POST', signal: ctrl.signal,
+      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + (session?.access_token || '') },
+      body: JSON.stringify(body),
+    });
+    const data = await res.json().catch(() => ({}));
+    return { ok: res.ok, status: res.status, data };
+  } catch (e) {
+    return { ok: false, status: 0, data: { error: e.name === 'AbortError' ? 'Het duurde te lang. Probeer het opnieuw.' : 'Geen verbinding.' } };
+  } finally { clearTimeout(t); }
+}
+function foutTekst(r) { return REDENEN[r.data?.reden] || r.data?.error || 'Er ging iets mis.'; }
+
+// ── stepper ──
+function zetFase(fase) {
+  $('stepper').style.display = 'flex';
+  const idx = FASEN.indexOf(fase === 'afgerond' ? 'stemming' : fase);
+  document.querySelectorAll('.step').forEach((el, i) => {
+    el.classList.toggle('active', i === idx);
+    el.classList.toggle('done', i < idx || fase === 'afgerond');
+  });
+}
+async function naarFase(fase) {
+  if (FASEN.indexOf(fase) > FASEN.indexOf(st.sessie.fase)) {
+    const r = await api('/api/sp-sessie', { actie: 'fase', sessie_id: st.sessie.id, fase });
+    if (r.ok) st.sessie = r.data.sessie;
+  }
+  render(fase);
+}
+
+// ════════════════════════════════════════════════════════════
+// INIT
+// ════════════════════════════════════════════════════════════
+async function init() {
+  let cfg = {};
+  try { cfg = await (await fetch('/api/config')).json(); } catch {}
+  if (!cfg.supabaseUrl || !cfg.supabaseAnon) { melding('Configuratie ontbreekt. Controleer de Netlify-omgevingsvariabelen.'); return; }
+  st.sb = window.supabase.createClient(cfg.supabaseUrl, cfg.supabaseAnon);
+  const { data: { session } } = await st.sb.auth.getSession();
+  if (!session) { toon('s-login'); return; }
+  $('gebruiker').textContent = session.user.email;
+  $('btn-uitloggen').style.display = '';
+  $('btn-uitloggen').onclick = async () => { await st.sb.auth.signOut(); location.href = '/'; };
+
+  const [fr, ds] = await Promise.all([
+    st.sb.from('sp_fracties').select('*').order('volgorde'),
+    st.sb.from('sp_dossiers').select('id,titel,inhoud').eq('actief', true),
+  ]);
+  if (fr.error || ds.error) { melding('Spelgegevens konden niet worden geladen. Is de database-migratie uitgevoerd?'); return; }
+  st.fracties = fr.data; st.dossiers = ds.data;
+
+  const hervatId = new URLSearchParams(location.search).get('sessie') || sessionStorage.getItem('sp_sessie');
+  if (hervatId && await laadSessie(hervatId)) return;
+  await toonStart();
+}
+
+async function laadSessie(id) {
+  const [s, b] = await Promise.all([
+    st.sb.from('sp_sessies').select('*').eq('id', id).maybeSingle(),
+    st.sb.from('sp_berichten').select('*').eq('sessie_id', id).order('id'),
+  ]);
+  if (!s.data) { sessionStorage.removeItem('sp_sessie'); return false; }
+  st.sessie = s.data;
+  st.berichten = b.data || [];
+  st.dossier = st.dossiers.find(d => d.id === st.sessie.dossier_id);
+  if (!st.dossier) return false;
+  sessionStorage.setItem('sp_sessie', id);
+  render(st.sessie.fase === 'afgerond' ? 'stemming' : st.sessie.fase);
+  return true;
+}
+
+// ════════════════════════════════════════════════════════════
+// START
+// ════════════════════════════════════════════════════════════
+async function toonStart() {
+  $('stepper').style.display = 'none';
+  st.sessie = null; st.berichten = []; st.positie = null; st.stem = null; st.ohKeuze = [];
+  sessionStorage.removeItem('sp_sessie');
+  history.replaceState(null, '', location.pathname);
+
+  const { data: open } = await st.sb.from('sp_sessies').select('id,dossier_id,speler_fractie,fase,created_at')
+    .neq('fase', 'afgerond').order('created_at', { ascending: false }).limit(3);
+  $('hervat-blok').style.display = open?.length ? '' : 'none';
+  $('hervat-lijst').innerHTML = (open || []).map(s => {
+    const f = fractie(s.speler_fractie), d = st.dossiers.find(x => x.id === s.dossier_id);
+    return `<button class="keuze" data-hervat="${esc(s.id)}"><div class="naam"><span class="dot" style="background:${esc(f.kleur)}"></span>${esc(d?.titel || s.dossier_id)}</div>
+      <div class="meta">${esc(f.naam)} · fase: ${esc(s.fase)} · ${new Date(s.created_at).toLocaleDateString('nl-NL')}</div></button>`;
+  }).join('');
+  $('hervat-lijst').querySelectorAll('[data-hervat]').forEach(b => b.onclick = () => laadSessie(b.dataset.hervat));
+
+  $('dossier-lijst').innerHTML = st.dossiers.map(d =>
+    `<button class="keuze" data-dossier="${esc(d.id)}"><div class="naam">${esc(d.titel)}</div><div class="omschr">${esc(d.inhoud?.pitch || '')}</div></button>`).join('');
+  $('fractie-lijst').innerHTML = st.fracties.map(f =>
+    `<button class="keuze" data-fractie="${esc(f.id)}"><div class="naam"><span class="dot" style="background:${esc(f.kleur)}"></span>${esc(f.naam)}</div>
+     <div class="meta">${f.zetels} zetels · ${esc(f.positie)}</div><div class="omschr">${esc(f.profiel?.waarden || '')}</div></button>`).join('');
+  if (st.dossiers.length === 1) st.keuze.dossier = st.dossiers[0].id;
+  const sync = () => {
+    document.querySelectorAll('[data-dossier]').forEach(b => b.classList.toggle('selected', b.dataset.dossier === st.keuze.dossier));
+    document.querySelectorAll('[data-fractie]').forEach(b => b.classList.toggle('selected', b.dataset.fractie === st.keuze.fractie));
+    $('btn-start').disabled = !(st.keuze.dossier && st.keuze.fractie);
+  };
+  document.querySelectorAll('[data-dossier]').forEach(b => b.onclick = () => { st.keuze.dossier = b.dataset.dossier; sync(); });
+  document.querySelectorAll('[data-fractie]').forEach(b => b.onclick = () => { st.keuze.fractie = b.dataset.fractie; sync(); });
+  sync();
+  toon('s-start');
+}
+
+$('btn-start').onclick = async () => {
+  const btn = $('btn-start'); btn.disabled = true; btn.textContent = 'Bezig…';
+  const r = await api('/api/sp-sessie', { actie: 'start', dossier_id: st.keuze.dossier, fractie_id: st.keuze.fractie });
+  btn.textContent = 'Spel starten →';
+  if (!r.ok) { btn.disabled = false; melding(foutTekst(r)); return; }
+  melding('');
+  st.sessie = r.data.sessie; st.berichten = [];
+  st.dossier = st.dossiers.find(d => d.id === st.sessie.dossier_id);
+  sessionStorage.setItem('sp_sessie', st.sessie.id);
+  render('briefing');
+};
+
+// ════════════════════════════════════════════════════════════
+// RENDER PER FASE
+// ════════════════════════════════════════════════════════════
+function render(fase) {
+  zetFase(st.sessie.fase === 'afgerond' ? 'afgerond' : fase);
+  ({ briefing: renderBriefing, fractieoverleg: renderFractieoverleg, commissie: renderCommissie,
+     onderhandeling: renderOnderhandeling, stemming: renderStemming })[fase]();
+}
+
+function renderBriefing() {
+  const d = st.dossier.inhoud;
+  $('br-titel').textContent = d.titel;
+  $('br-pitch').textContent = d.pitch || '';
+  $('br-voorstel').textContent = d.raadsvoorstel || '';
+  $('br-context').textContent = d.context || '';
+  $('br-feiten').innerHTML = (d.feiten || []).map(f => `<li>${esc(f)}</li>`).join('');
+  $('br-opties').innerHTML = (d.opties || []).map(o => `<div class="optie"><b>${esc(o.titel)}</b>${esc(o.omschrijving)}</div>`).join('');
+  toon('s-briefing');
+}
+$('btn-naar-fractieoverleg').onclick = () => naarFase('fractieoverleg');
+
+function renderFractieoverleg() {
+  if (st.sessie.speler_positie) return naarFase('commissie');
+  const f = fractie(st.sessie.speler_fractie);
+  $('fo-intro').textContent = `Je bent fractievoorzitter van ${f.naam} (${f.zetels} zetels, ${f.positie}). Bepaal met je fractie of jullie voor of tegen het raadsvoorstel zijn, en wat je in de commissie gaat zeggen.`;
+  const check = () => { $('btn-inbreng').disabled = !(st.positie && $('fo-inbreng').value.trim().length >= 10); $('fo-teller').textContent = $('fo-inbreng').value.length; };
+  document.querySelectorAll('#fo-positie button').forEach(b => b.onclick = () => {
+    st.positie = b.dataset.positie;
+    document.querySelectorAll('#fo-positie button').forEach(x => x.classList.toggle('on', x === b));
+    check();
+  });
+  $('fo-inbreng').oninput = check;
+  check();
+  toon('s-fractieoverleg');
+}
+$('btn-inbreng').onclick = async () => {
+  const btn = $('btn-inbreng'); btn.disabled = true; btn.textContent = 'Bezig…';
+  const r = await api('/api/sp-sessie', { actie: 'inbreng', sessie_id: st.sessie.id, positie: st.positie, inbreng: $('fo-inbreng').value });
+  btn.textContent = 'Inbreng indienen →';
+  if (!r.ok) { btn.disabled = false; melding(foutTekst(r)); return; }
+  melding('');
+  st.sessie = r.data.sessie;
+  st.berichten.push({ rol: 'speler', soort: 'inbreng', tekst: st.sessie.speler_inbreng, fractie_id: st.sessie.speler_fractie });
+  render('commissie');
+};
+
+// ── COMMISSIE ──
+function standpunt(id) { const s = st.sessie.standpunten?.[id]; return s && s.houding ? s : null; }
+function openingBericht(id) { return st.berichten.find(b => b.soort === 'opening' && b.fractie_id === id); }
+
+function renderCommissie() {
+  const eigen = fractie(st.sessie.speler_fractie);
+  $('cm-eigen').style.borderLeftColor = eigen.kleur;
+  $('cm-eigen').innerHTML = `<div class="fractie-kop"><span class="naam">${esc(eigen.naam)} — jouw fractie</span><span class="meta">${eigen.zetels} zetels</span>${houdingBadge(st.sessie.speler_positie)}</div><p>${esc(st.sessie.speler_inbreng)}</p>`;
+  $('cm-fracties').innerHTML = npcFracties().map(f => `<div class="card fractie" id="cm-${esc(f.id)}" style="border-left-color:${esc(f.kleur)}"></div>`).join('');
+  npcFracties().forEach(f => renderFractieKaart(f.id));
+  updateCommissieKnoppen();
+  toon('s-commissie');
+  haalOpeningenOp();
+}
+
+function renderFractieKaart(id) {
+  const f = fractie(id), sp = standpunt(id), el = $('cm-' + id);
+  if (!el) return;
+  const kop = `<div class="fractie-kop"><span class="dot" style="background:${esc(f.kleur)}"></span><span class="naam">${esc(f.naam)}</span><span class="meta">${f.zetels} zetels · ${esc(f.positie)}</span>${sp ? houdingBadge(sp.houding) : ''}</div>`;
+  if (!sp) {
+    el.innerHTML = kop + (st.bezig.has('open:' + id)
+      ? `<p class="laden">${esc(f.naam)} bereidt een reactie voor…</p>`
+      : `<p class="laden">Nog geen reactie.</p><button class="btn btn-ghost" data-opnieuw="${esc(id)}" style="margin-top:.5rem">Opnieuw proberen</button>`);
+    const b = el.querySelector('[data-opnieuw]'); if (b) b.onclick = () => haalOpening(id).then(updateCommissieKnoppen);
+    return;
+  }
+  const ob = openingBericht(id);
+  const vragen = st.berichten.filter(b => b.soort === 'vraag' && b.fractie_id === id);
+  const gesteld = st.sessie.vragen?.[id] || 0;
+  const max = st.sessie.caps.max_vragen_per_fractie;
+  const qa = vragen.map(b => b.rol === 'speler'
+    ? `<div class="v">Jij: ${esc(b.tekst)}</div>`
+    : `<div class="a">${esc(b.tekst)}${b.meta?.fallback ? ' <span class="gescript">· standaardantwoord</span>' : ''}</div>`).join('');
+  const kanVragen = gesteld < max && st.sessie.fase === 'commissie';
+  el.innerHTML = kop +
+    `<p>${esc(sp.tekst)}${ob?.meta?.fallback ? ' <span class="gescript">· standaardantwoord</span>' : ''}</p>` +
+    (sp.voorwaarde ? `<div class="voorwaarde">Wat deze fractie nodig heeft: ${esc(sp.voorwaarde)}</div>` : '') +
+    (qa ? `<div class="qa">${qa}</div>` : '') +
+    (st.bezig.has('vraag:' + id) ? `<p class="laden" style="margin-top:.5rem">${esc(f.naam)} denkt na…</p>` : '') +
+    (kanVragen
+      ? `<div class="vraagrij"><input type="text" maxlength="600" placeholder="Stel ${esc(f.naam)} een vraag…" id="vr-${esc(id)}"><button class="btn btn-primary" data-vraag="${esc(id)}">Vraag (${max - gesteld} over)</button></div>`
+      : `<p class="hint" style="margin-top:.5rem">${gesteld >= max ? 'Je vragen aan deze fractie zijn op.' : ''}</p>`);
+  const knop = el.querySelector('[data-vraag]');
+  if (knop) {
+    const inp = $('vr-' + id);
+    knop.disabled = st.bezig.has('vraag:' + id);
+    knop.onclick = () => stelVraag(id, inp.value);
+    inp.onkeydown = e => { if (e.key === 'Enter') stelVraag(id, inp.value); };
+  }
+}
+
+async function haalOpening(id) {
+  if (standpunt(id) || st.bezig.has('open:' + id)) return;
+  st.bezig.add('open:' + id); renderFractieKaart(id);
+  const r = await api('/api/npc-fractie', { sessie_id: st.sessie.id, soort: 'opening', fractie_id: id });
+  st.bezig.delete('open:' + id);
+  if (r.ok) {
+    const a = r.data.antwoord;
+    st.sessie.standpunten = { ...st.sessie.standpunten, [id]: { houding: a.houding, voorwaarde: a.voorwaarde, tekst: a.tekst } };
+    st.berichten.push({ rol: 'npc', soort: 'opening', fractie_id: id, tekst: a.tekst, meta: { fallback: r.data.fallback } });
+  } else if (r.data?.reden === 'al_geopend') {
+    // al opgevraagd in een ander tabblad: sessie verversen
+    const { data } = await st.sb.from('sp_sessies').select('standpunten').eq('id', st.sessie.id).single();
+    if (data) st.sessie.standpunten = data.standpunten;
+  }
+  renderFractieKaart(id);
+}
+
+async function haalOpeningenOp() {
+  const open = npcFracties().filter(f => !standpunt(f.id)).map(f => f.id);
+  if (!open.length) return;
+  // Eerst één call alleen: die schrijft de prompt-cache. De rest daarna
+  // parallel, zodat die cache-hits krijgen (scheelt ~5 cache-writes per sessie).
+  await haalOpening(open[0]);
+  await Promise.all(open.slice(1).map(haalOpening));
+  updateCommissieKnoppen();
+}
+
+function updateCommissieKnoppen() {
+  const klaar = npcFracties().every(f => standpunt(f.id));
+  $('btn-naar-onderhandeling').disabled = !klaar;
+  $('btn-direct-stemming').disabled = !klaar;
+}
+
+async function stelVraag(id, tekst) {
+  tekst = (tekst || '').trim();
+  if (!tekst || st.bezig.has('vraag:' + id)) return;
+  st.bezig.add('vraag:' + id);
+  st.berichten.push({ rol: 'speler', soort: 'vraag', fractie_id: id, tekst });
+  renderFractieKaart(id);
+  const r = await api('/api/npc-fractie', { sessie_id: st.sessie.id, soort: 'vraag', fractie_id: id, tekst });
+  st.bezig.delete('vraag:' + id);
+  if (r.ok) {
+    st.sessie.vragen = { ...st.sessie.vragen, [id]: (st.sessie.vragen?.[id] || 0) + 1 };
+    st.berichten.push({ rol: 'npc', soort: 'vraag', fractie_id: id, tekst: r.data.antwoord.tekst, meta: { fallback: r.data.fallback } });
+  } else {
+    st.berichten.pop(); // vraag niet verwerkt
+    if (r.data?.reden === 'vragencap') st.sessie.vragen = { ...st.sessie.vragen, [id]: st.sessie.caps.max_vragen_per_fractie };
+    melding(foutTekst(r));
+  }
+  renderFractieKaart(id);
+}
+$('btn-naar-onderhandeling').onclick = () => naarFase('onderhandeling');
+$('btn-direct-stemming').onclick = () => naarFase('stemming');
+
+// ── ONDERHANDELING ──
+function renderOnderhandeling() {
+  const oh = st.sessie.onderhandeling;
+  const max = st.sessie.caps.max_onderhandeling_fracties;
+  if (!oh) {
+    $('oh-kiezen').style.display = ''; $('oh-gesprek').style.display = 'none';
+    $('oh-fractiekeuze').innerHTML = npcFracties().map(f => {
+      const sp = standpunt(f.id);
+      return `<button class="keuze" data-oh="${esc(f.id)}"><div class="naam"><span class="dot" style="background:${esc(f.kleur)}"></span>${esc(f.naam)} ${sp ? houdingBadge(sp.houding) : ''}</div>
+        <div class="meta">${f.zetels} zetels · ${esc(f.positie)}</div>${sp?.voorwaarde ? `<div class="omschr">Wil: ${esc(sp.voorwaarde)}</div>` : ''}</button>`;
+    }).join('');
+    const sync = () => {
+      document.querySelectorAll('[data-oh]').forEach(b => b.classList.toggle('selected', st.ohKeuze.includes(b.dataset.oh)));
+      $('oh-gesprek').style.display = st.ohKeuze.length ? '' : 'none';
+      $('oh-akkoord').innerHTML = ''; $('oh-chat').innerHTML = '';
+      $('oh-over').textContent = st.sessie.caps.max_onderhandeling_beurten;
+      checkStuur();
+    };
+    document.querySelectorAll('[data-oh]').forEach(b => b.onclick = () => {
+      const id = b.dataset.oh;
+      if (st.ohKeuze.includes(id)) st.ohKeuze = st.ohKeuze.filter(x => x !== id);
+      else if (st.ohKeuze.length < max) st.ohKeuze.push(id);
+      sync();
+    });
+    sync();
+  } else {
+    st.ohKeuze = oh.fracties;
+    $('oh-kiezen').style.display = 'none'; $('oh-gesprek').style.display = '';
+    renderGesprek();
+  }
+  $('oh-invoer').oninput = checkStuur;
+  checkStuur();
+  toon('s-onderhandeling');
+}
+function beurtenOver() { return st.sessie.caps.max_onderhandeling_beurten - (st.sessie.onderhandeling?.beurten || 0); }
+function checkStuur() {
+  $('btn-oh-stuur').disabled = st.bezig.has('oh') || !st.ohKeuze.length || beurtenOver() <= 0 || !$('oh-invoer').value.trim();
+}
+function renderGesprek() {
+  const akk = st.sessie.onderhandeling?.akkoord || {};
+  $('oh-akkoord').innerHTML = st.ohKeuze.map(id => {
+    const v = akk[id];
+    return `<span class="akkoord-chip ${v === true ? 'ja' : v === false ? 'nee' : ''}">${esc(fractie(id).naam)}: ${v === true ? 'akkoord' : v === false ? 'geen akkoord' : 'nog open'}</span>`;
+  }).join('');
+  $('oh-chat').innerHTML = st.berichten.filter(b => b.soort === 'onderhandeling').map(b => b.rol === 'speler'
+    ? `<div class="ik">${esc(b.tekst)}</div>`
+    : `<div class="zij"><div class="wie" style="color:${esc(fractie(b.fractie_id).kleur)}">${esc(fractie(b.fractie_id).naam)}</div>${esc(b.tekst)}${b.meta?.fallback ? ' <span class="gescript">· standaardantwoord</span>' : ''}</div>`).join('')
+    + (st.bezig.has('oh') ? '<p class="laden">De fracties overleggen…</p>' : '');
+  $('oh-over').textContent = beurtenOver();
+  $('oh-invoer').disabled = beurtenOver() <= 0;
+  if (beurtenOver() <= 0) $('oh-invoer').placeholder = 'Je berichten zijn op. Ga door naar de stemming.';
+}
+$('btn-oh-stuur').onclick = async () => {
+  const tekst = $('oh-invoer').value.trim();
+  if (!tekst) return;
+  st.bezig.add('oh'); checkStuur();
+  st.berichten.push({ rol: 'speler', soort: 'onderhandeling', tekst });
+  $('oh-kiezen').style.display = 'none'; $('oh-gesprek').style.display = '';
+  renderGesprek();
+  const body = { sessie_id: st.sessie.id, soort: 'onderhandeling', tekst };
+  if (!st.sessie.onderhandeling) body.fracties = st.ohKeuze;
+  const r = await api('/api/npc-fractie', body, 30000);
+  st.bezig.delete('oh');
+  if (r.ok) {
+    $('oh-invoer').value = '';
+    const oh = st.sessie.onderhandeling || { fracties: st.ohKeuze, beurten: 0, akkoord: {} };
+    st.sessie.onderhandeling = { ...oh, beurten: oh.beurten + 1, akkoord: { ...oh.akkoord, ...r.data.antwoord.akkoord } };
+    r.data.antwoord.reacties.forEach(x => st.berichten.push({ rol: 'npc', soort: 'onderhandeling', fractie_id: x.fractie, tekst: x.tekst, meta: { fallback: r.data.fallback } }));
+  } else {
+    st.berichten.pop();
+    melding(foutTekst(r));
+  }
+  renderGesprek(); checkStuur();
+};
+$('btn-naar-stemming').onclick = () => naarFase('stemming');
+
+// ── STEMMING ──
+function renderStemming() {
+  if (st.sessie.uitslag?.stemmen) return toonUitslag(st.sessie.uitslag);
+  $('st-kiezen').style.display = ''; $('st-uitslag').style.display = 'none';
+  $('st-titel').textContent = 'Hoe stemt jouw fractie?';
+  st.stem = st.stem || st.sessie.speler_positie;
+  const sync = () => document.querySelectorAll('#st-stem button').forEach(b => b.classList.toggle('on', b.dataset.stem === st.stem));
+  document.querySelectorAll('#st-stem button').forEach(b => b.onclick = () => { st.stem = b.dataset.stem; sync(); });
+  sync();
+  toon('s-stemming');
+}
+$('btn-stem').onclick = async () => {
+  const btn = $('btn-stem'); btn.disabled = true; btn.textContent = 'De raad stemt…';
+  const r = await api('/api/npc-fractie', { sessie_id: st.sessie.id, soort: 'stemverklaringen', speler_stem: st.stem }, 30000);
+  btn.disabled = false; btn.textContent = 'Stemming openen →';
+  if (!r.ok) { melding(foutTekst(r)); return; }
+  melding('');
+  st.sessie.uitslag = r.data.uitslag; st.sessie.fase = 'afgerond';
+  zetFase('afgerond');
+  toonUitslag(r.data.uitslag);
+};
+function toonUitslag(u) {
+  $('st-kiezen').style.display = 'none'; $('st-uitslag').style.display = '';
+  $('st-titel').textContent = 'De uitslag';
+  $('st-kop').textContent = u.aangenomen ? 'Het raadsvoorstel is aangenomen' : 'Het raadsvoorstel is verworpen';
+  const volgorde = ['voor', 'tegen'];
+  const segmenten = volgorde.flatMap(stem => st.fracties.filter(f => u.stemmen[f.id]?.stem === stem));
+  const eersteTegen = segmenten.findIndex(f => u.stemmen[f.id].stem === 'tegen');
+  $('st-balk').innerHTML = segmenten.map((f, i) => `<div title="${esc(f.naam)} — ${esc(u.stemmen[f.id].stem)}" style="width:${(f.zetels / 25 * 100).toFixed(1)}%;background:${esc(f.kleur)};${u.stemmen[f.id].stem === 'tegen' ? 'opacity:.4;' : ''}${i === eersteTegen && i > 0 ? 'border-left:3px solid #fff;' : ''}"></div>`).join('');
+  $('st-cijfers').textContent = `${u.voor} voor · ${u.tegen} tegen (gekleurd = voor, vaag = tegen)`;
+  $('st-verklaringen').innerHTML = st.fracties.map(f => {
+    const s = u.stemmen[f.id]; if (!s) return '';
+    const eigen = f.id === st.sessie.speler_fractie;
+    const verkl = eigen ? 'Jouw fractie.' : (u.verklaringen?.[f.id] || '');
+    const akkoord = s.reden === 'akkoord' ? ' <span class="gescript">· na akkoord met jou</span>' : '';
+    return `<div class="stemrij"><div class="wie"><span class="dot" style="background:${esc(f.kleur)}"></span>${esc(f.naam)} (${f.zetels})</div>
+      <div class="stem" style="color:${s.stem === 'voor' ? 'var(--success)' : 'var(--accent)'}">${esc(s.stem)}</div><div class="verkl">${esc(verkl)}${akkoord}</div></div>`;
+  }).join('');
+  $('st-reflectie').innerHTML = (st.dossier.inhoud.reflectievragen || []).map(q => `<li>${esc(q)}</li>`).join('');
+  toon('s-stemming');
+}
+$('btn-opnieuw').onclick = () => toonStart();
+
+init().catch(e => { console.error(e); melding('Er ging iets mis bij het laden: ' + e.message); });
+</script>
+</body>
+</html>
