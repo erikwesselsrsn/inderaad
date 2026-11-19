@@ -29,8 +29,8 @@ function nepClaude(body) {
   claudeLog.push({ model: body.model, cache: body.system[0].cache_control, delta });
   if (claudeGedrag === 'fout') return new Response('overloaded', { status: 529 });
   let uit;
-  if (delta.includes('openingsstandpunt')) uit = { tekst: 'Wij zien voordelen, maar willen zekerheid over het verkeer.', houding: 'twijfel', voorwaarde: 'verkeersmaatregelen vooraf' };
-  else if (delta.includes('vragenronde')) uit = { tekst: 'Dat hangt af van het verkeersonderzoek.' };
+  if (delta.includes('openingsstandpunt')) uit = { tekst: 'Wij zien voordelen, maar willen zekerheid over het verkeer.', houding: 'twijfel', voorwaarde: 'verkeersmaatregelen vooraf', ...(delta.includes('houding_amendement') ? { houding_amendement: 'tegen' } : {}) };
+  else if (delta.includes('vragenronde')) uit = { tekst: 'Met die toezegging over het verkeer kunnen wij meegaan.', houding: 'voor', voorwaarde: null };
   else if (delta.includes('onderhandeling')) {
     const ids = [...delta.matchAll(/"([a-z]+)": true \| false/g)].map(m => m[1]);
     uit = { reacties: ids.map(id => ({ fractie: id, tekst: 'Als dat in het amendement komt, steunen wij het.' })), akkoord: Object.fromEntries(ids.map(id => [id, true])) };
@@ -59,6 +59,7 @@ function nepSupabase(url, init) {
     return Response.json(sql(`select public.${naam}(${params})`));
   }
   if (pad === 'sp_npc_config') return Response.json([{ data: {} }]);
+  if (pad === 'sp_sessies') return Response.json(sql(`select coalesce(json_agg(x), '[]') from sp_sessies x where id = ${lit(u.searchParams.get('id').slice(3))} and user_id = ${lit(u.searchParams.get('user_id').slice(3))}`));
   if (pad === 'sp_fracties') return Response.json(sql(`select json_agg(f order by volgorde) from sp_fracties f`));
   if (pad === 'sp_dossiers') return Response.json(sql(`select json_agg(d) from sp_dossiers d where id = ${lit(u.searchParams.get('id').slice(3))}`));
   if (pad === 'sp_berichten') {
@@ -88,7 +89,7 @@ test('singleplayer-flow end-to-end', { skip: !PSQL && 'SP_TEST_PSQL niet gezet' 
     assert.equal((await call(npc, { sessie_id: USER, soort: 'opening', fractie_id: 'sgp' }, 'fout-token-123456789')).status, 401);
   });
 
-  const start = await call(sessie, { actie: 'start', dossier_id: 'veldkamp-woningbouw', fractie_id: 'cda' });
+  const start = await call(sessie, { actie: 'start', dossier_id: 'banis-omgevingsplan', fractie_id: 'cda' });
   assert.equal(start.status, 200);
   const sid = start.body.sessie.id;
 
@@ -108,6 +109,19 @@ test('singleplayer-flow end-to-end', { skip: !PSQL && 'SP_TEST_PSQL niet gezet' 
     assert.ok(rest.every(r => r.status === 200));
     assert.ok(claudeLog.every(c => c.model === 'claude-sonnet-5-5' && c.cache.ttl === '1h'));
     assert.equal((await call(npc, { sessie_id: sid, soort: 'opening', fractie_id: 'sgp' })).body.reden, 'al_geopend');
+  });
+
+  await t.test('vraag kan houding één stap laten opschuiven en wordt opgeslagen', async () => {
+    // alle openingen zijn "twijfel" in de nep; zet fvd op "tegen" om de stapbeperking te testen
+    sql(`update sp_sessies set standpunten = jsonb_set(standpunten, '{fvd,houding}', '"tegen"') where id = '${sid}'; select 'null'`);
+    const r = await call(npc, { sessie_id: sid, soort: 'vraag', fractie_id: 'fvd', tekst: 'Wat als het verkeersonderzoek eerst komt?' });
+    assert.equal(r.status, 200);
+    assert.equal(r.body.antwoord.houding, 'twijfel', 'tegen → voor wordt beperkt tot één stap');
+    assert.equal(r.body.antwoord.houding_was, 'tegen');
+    const s = sql(`select standpunten->'fvd' from sp_sessies where id = '${sid}'`);
+    assert.equal(s.houding, 'twijfel');
+    assert.ok(s.tekst, 'openingstekst blijft bewaard');
+    assert.equal(s.voorwaarde, null);
   });
 
   await t.test('vragen op Haiku, cap van 2 per fractie', async () => {
@@ -130,16 +144,27 @@ test('singleplayer-flow end-to-end', { skip: !PSQL && 'SP_TEST_PSQL niet gezet' 
     assert.equal(r.status, 200);
     assert.equal(r.body.fallback, true);
     assert.match(r.body.antwoord.tekst, /eerder ingenomen standpunt/);
+    assert.equal(sql(`select to_json(standpunten->'cu'->>'houding') from sp_sessies where id = '${sid}'`), 'twijfel', 'fallback verandert houding niet');
   });
 
-  await t.test('onderhandeling: max 2 fracties, 4 beurten, akkoord telt mee', async () => {
+  await t.test('onderhandeling: per bericht 1–2 fracties, wisselen mag, totaal 6 berichten', async () => {
     assert.equal((await call(npc, { sessie_id: sid, soort: 'onderhandeling', fracties: ['gb', 'cu', 'pro'], tekst: 'Deal?' })).status, 400);
-    for (let i = 1; i <= 4; i++) {
-      const r = await call(npc, { sessie_id: sid, soort: 'onderhandeling', fracties: ['gb', 'pro'], tekst: `Voorstel ${i}: verkeersmaatregelen vooraf.` });
-      assert.equal(r.status, 200, `beurt ${i}`);
-      assert.equal(r.body.status.onderhandeling_beurten_over, 4 - i);
+    assert.equal((await call(npc, { sessie_id: sid, soort: 'onderhandeling', tekst: 'Zonder fractie' })).status, 400);
+    const volgorde = [['sgp'], ['gb'], ['gb', 'pro'], ['fvd'], ['vvd'], ['pro']];
+    claudeLog.length = 0;
+    for (let i = 0; i < volgorde.length; i++) {
+      const r = await call(npc, { sessie_id: sid, soort: 'onderhandeling', fracties: volgorde[i], tekst: `Voorstel ${i + 1}: verkeersmaatregelen vooraf.` });
+      assert.equal(r.status, 200, `bericht ${i + 1}`);
+      assert.deepEqual(r.body.antwoord.reacties.map(x => x.fractie), volgorde[i]);
+      assert.equal(r.body.status.onderhandeling_beurten_over, 6 - (i + 1));
     }
-    assert.equal((await call(npc, { sessie_id: sid, soort: 'onderhandeling', tekst: 'Nog één?' })).status, 429);
+    // delta bij gb+pro bevat het eerdere gesprek met gb, niet dat met sgp
+    assert.ok(claudeLog[2].delta.includes('Voorstel 2'));
+    assert.ok(!claudeLog[2].delta.includes('Voorstel 1'));
+    assert.equal((await call(npc, { sessie_id: sid, soort: 'onderhandeling', fracties: ['cu'], tekst: 'Nog één?' })).status, 429);
+    const oh = sql(`select onderhandeling from sp_sessies where id = '${sid}'`);
+    assert.deepEqual(oh.fracties.sort(), ['fvd', 'gb', 'pro', 'sgp', 'vvd']);
+    assert.equal(oh.akkoord.sgp, true);
   });
 
   await t.test('stemming: regelgebaseerd + stemverklaringen, daarna afgerond', async () => {
@@ -156,16 +181,16 @@ test('singleplayer-flow end-to-end', { skip: !PSQL && 'SP_TEST_PSQL niet gezet' 
 
   await t.test('tokenlog en kosten zijn bijgehouden', () => {
     const k = sql(`select row_to_json(k) from sp_kosten_per_sessie k where sessie_id = '${sid}'`);
-    assert.equal(k.calls, 6 + 3 + 4 + 1);
+    assert.equal(k.calls, 6 + 4 + 6 + 1);
     assert.equal(k.fallbacks, 1);
     assert.ok(Number(k.kosten_usd) > 0 && Number(k.kosten_usd) < 0.12, 'kosten ' + k.kosten_usd);
     const s = sql(`select row_to_json(s) from sp_sessies s where id = '${sid}'`);
     assert.equal(s.fase, 'afgerond');
-    assert.equal(s.calls_gebruikt, 14);
+    assert.equal(s.calls_gebruikt, 17);
   });
 
   await t.test('circuit breaker: na max_calls gescript, geen Claude-call meer', async () => {
-    const s2 = (await call(sessie, { actie: 'start', dossier_id: 'veldkamp-woningbouw', fractie_id: 'pro' })).body.sessie.id;
+    const s2 = (await call(sessie, { actie: 'start', dossier_id: 'banis-omgevingsplan', fractie_id: 'pro' })).body.sessie.id;
     await call(sessie, { sessie_id: s2, actie: 'inbreng', positie: 'tegen', inbreng: 'Meer sociale huur.' });
     sql(`update sp_sessies set caps = caps || '{"max_calls": 1}' where id = '${s2}'; select 'null'`);
     claudeLog.length = 0;
@@ -176,8 +201,43 @@ test('singleplayer-flow end-to-end', { skip: !PSQL && 'SP_TEST_PSQL niet gezet' 
     assert.equal(tweede.body.antwoord.houding, 'voor', 'startneiging uit dossier');
   });
 
+  await t.test('amendement: eerst stemmen over amendement, dan over het voorstel', async () => {
+    const s4 = (await call(sessie, { actie: 'start', dossier_id: 'banis-omgevingsplan', fractie_id: 'cu' })).body.sessie.id;
+    const ib = await call(sessie, { sessie_id: s4, actie: 'inbreng', positie: 'voor', inbreng: 'Wij steunen De Banis.', amendement: 'Het aandeel sociale huur gaat naar 35%.' });
+    assert.equal(ib.body.sessie.amendement.tekst, 'Het aandeel sociale huur gaat naar 35%.');
+    claudeLog.length = 0;
+    const op = await call(npc, { sessie_id: s4, soort: 'opening', fractie_id: 'pro' });
+    assert.equal(op.body.antwoord.houding_amendement, 'tegen');
+    assert.ok(claudeLog[0].delta.includes('Amendement van ChristenUnie'), 'amendement zit in de delta');
+    // overige openingen
+    await Promise.all(['sgp', 'cda', 'gb', 'fvd', 'vvd'].map(f => call(npc, { sessie_id: s4, soort: 'opening', fractie_id: f })));
+    // amendement aanpassen mag tot de stemming
+    const aanp = await call(sessie, { sessie_id: s4, actie: 'amendement', tekst: 'Het aandeel sociale huur gaat naar 40%.' });
+    assert.equal(aanp.body.sessie.amendement.tekst, 'Het aandeel sociale huur gaat naar 40%.');
+    // akkoord met PRO via onderhandeling
+    await call(npc, { sessie_id: s4, soort: 'onderhandeling', fracties: ['pro'], tekst: 'Steunt u ons amendement van 40%?' });
+    // stemverklaringen vóór amendementstemming: geweigerd
+    const te_vroeg = await call(npc, { sessie_id: s4, soort: 'stemverklaringen', speler_stem: 'voor' });
+    assert.equal(te_vroeg.status, 409); assert.equal(te_vroeg.body.reden, 'eerst_amendement');
+    const am = await call(sessie, { sessie_id: s4, actie: 'stem_amendement' });
+    assert.equal(am.status, 200);
+    const au = am.body.sessie.amendement.uitslag;
+    assert.equal(au.stemmen.cu.stem, 'voor');
+    assert.equal(au.stemmen.pro.stem, 'voor', 'akkoord → voor amendement');
+    assert.equal(au.stemmen.sgp.stem, 'tegen', 'houding_amendement tegen');
+    assert.equal(au.voor, 3 + 1);
+    assert.equal(au.aangenomen, false);
+    // aanpassen na de stemming kan niet meer
+    assert.equal((await call(sessie, { sessie_id: s4, actie: 'amendement', tekst: 'later' })).status, 409);
+    const st = await call(npc, { sessie_id: s4, soort: 'stemverklaringen', speler_stem: 'voor' });
+    assert.equal(st.status, 200);
+    assert.equal(st.body.uitslag.amendement.aangenomen, false);
+    assert.equal(st.body.uitslag.voor + st.body.uitslag.tegen, 25);
+    assert.ok(claudeLog.at(-1).delta.includes('Stemming over het amendement'));
+  });
+
   await t.test('modeloutput zonder JSON → gescript, gelogd als fallback', async () => {
-    const s3 = (await call(sessie, { actie: 'start', dossier_id: 'veldkamp-woningbouw', fractie_id: 'vvd' })).body.sessie.id;
+    const s3 = (await call(sessie, { actie: 'start', dossier_id: 'banis-omgevingsplan', fractie_id: 'vvd' })).body.sessie.id;
     await call(sessie, { sessie_id: s3, actie: 'inbreng', positie: 'voor', inbreng: 'Snel bouwen.' });
     claudeGedrag = 'rommel';
     const r = await call(npc, { sessie_id: s3, soort: 'opening', fractie_id: 'fvd' });

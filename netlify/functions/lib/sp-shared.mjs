@@ -29,12 +29,15 @@ export const DEFAULT_CONFIG = {
   },
   cache_ttl: '1h',          // '1h' of '5m'
   timeout_ms: 9000,         // onder de synchrone Netlify-limiet blijven (plan-afhankelijk!)
-  max_tokens: { opening: 400, vraag: 250, onderhandeling: 500, stemverklaringen: 600 },
+  // Plafond per antwoord. Ruim gekozen: het is een bovengrens, je betaalt alleen
+  // wat het model echt schrijft. Te krap = afgekapte JSON = gescript antwoord
+  // (playtest 19-11: vrijwel alle calls liepen tegen 400/250/500/600 aan).
+  max_tokens: { opening: 900, vraag: 600, onderhandeling: 1200, stemverklaringen: 1500 },
   caps: {
-    max_calls: 26,                   // 6 openingen + 12 vragen + 4 onderhandeling + 1 stemming = 23, plus marge
-    max_kosten_usd: 0.12,            // ~2x de verwachte $0,05–0,06 per sessie
+    max_calls: 28,                   // 6 openingen + 12 vragen + 6 onderhandeling + 1 stemming = 25, plus marge
+    max_kosten_usd: 0.15,            // ~2x de verwachte $0,06–0,08 per sessie
     max_vragen_per_fractie: 2,
-    max_onderhandeling_beurten: 4,
+    max_onderhandeling_beurten: 6,   // totaal aantal berichten, te verdelen over fracties naar keuze
     max_onderhandeling_fracties: 2,
   },
   max_sessies_per_dag: 8,            // per gebruiker; begrenst kosten via "nieuwe sessie"-route
@@ -160,7 +163,46 @@ export function parseJsonUitTekst(tekst) {
   return null;
 }
 
+/**
+ * Reddingspoging voor afgekapte JSON (stop_reason = max_tokens): haal het
+ * veld "tekst" eruit tot de laatste volledige zin, plus houding/voorwaarde
+ * als die al compleet zijn. Alleen bruikbaar voor opening en vraag.
+ */
+export function redAfgekapteJson(tekst) {
+  if (typeof tekst !== 'string') return null;
+  const veld = (naam) => {
+    const m = tekst.match(new RegExp('"' + naam + '"\\s*:\\s*"((?:[^"\\\\]|\\\\.)*)("?)'));
+    if (!m) return null;
+    let v; try { v = JSON.parse('"' + m[1].replace(/\\$/, '') + '"'); } catch { v = m[1]; }
+    return { waarde: v, compleet: m[2] === '"' };
+  };
+  const t = veld('tekst');
+  if (!t || !t.waarde) return null;
+  let tekstWaarde = t.waarde.trim();
+  if (!t.compleet) {
+    const einde = Math.max(tekstWaarde.lastIndexOf('. '), tekstWaarde.lastIndexOf('? '), tekstWaarde.lastIndexOf('! '));
+    if (/[.?!]$/.test(tekstWaarde)) { /* al netjes */ }
+    else if (einde > 40) tekstWaarde = tekstWaarde.slice(0, einde + 1);
+    else return null;
+  }
+  const uit = { tekst: tekstWaarde };
+  const h = veld('houding'); if (h?.compleet) uit.houding = h.waarde;
+  const ha = veld('houding_amendement'); if (ha?.compleet) uit.houding_amendement = ha.waarde;
+  const v = veld('voorwaarde'); if (v?.compleet) uit.voorwaarde = v.waarde;
+  return uit;
+}
+
 const HOUDINGEN = ['voor', 'tegen', 'twijfel'];
+const SCHAAL = ['tegen', 'twijfel', 'voor'];
+
+/** Houding mag per vraag maximaal één stap opschuiven (tegen ↔ twijfel ↔ voor). */
+export function beperkStap(oud, nieuw) {
+  const o = SCHAAL.indexOf(oud), n = SCHAAL.indexOf(nieuw);
+  if (o === -1) return n === -1 ? 'twijfel' : nieuw;
+  if (n === -1) return oud;
+  if (Math.abs(n - o) <= 1) return nieuw;
+  return SCHAAL[o + Math.sign(n - o)];
+}
 export function normaliseerHouding(h, fallback = 'twijfel') {
   const v = typeof h === 'string' ? h.toLowerCase().trim() : '';
   return HOUDINGEN.includes(v) ? v : fallback;
@@ -184,6 +226,7 @@ export function bouwStatischePrompt(dossier, fracties) {
       `Waarden: ${p.waarden || '-'}`,
       `Waar deze fractie op let: ${p.aandachtspunten || '-'}`,
       `Toon: ${p.toon || '-'}`,
+      ...(p.coalitie ? [`Positie in de raad: ${p.coalitie}`] : []),
       `Bij dit dossier: ${hint.aandachtspunt || '-'} (startneiging: ${hint.neiging || 'twijfel'})`,
     ].join('\n');
   }).join('\n\n');
@@ -196,15 +239,19 @@ export function bouwStatischePrompt(dossier, fracties) {
 ## Kernregels
 - Elke fractie redeneert geloofwaardig vanuit haar eigen waarden en belangen. Geen partij is "de goede" of "de slechte". Geen karikaturen, geen stereotypering van raadsleden, ambtenaren of inwoners.
 - Laat zien dat er echte afwegingen zijn: benoem wat een keuze kost, niet alleen wat ze oplevert.
+- Fracties hebben een eigen lijn, maar zijn niet onwrikbaar. Ze laten zich overtuigen door argumenten en voorstellen die aansluiten bij hun eigen waarden en belangen, en zoeken dan een compromis. Alleen bij iets dat recht tegen hun kernwaarden ingaat, gaan ze niet mee.
+- Neem de voorstellen van de leerling serieus en reageer er inhoudelijk op: wat is goed, wat schuurt, en onder welke voorwaarde zou de fractie meegaan.
 - Spreek als "de fractie" of "de fractievoorzitter". Noem GEEN persoonsnamen van raadsleden, collegeleden of inwoners.
 - Gebruik alleen feiten en cijfers uit het dossier hieronder. Verzin geen nieuwe cijfers, rapporten of gebeurtenissen.
 - De raad bestuurt niet: de raad kadert en controleert, het college voert uit. Raadsleden kunnen amenderen, moties indienen en stemmen; onthouden van stemming bestaat in de raad niet.
 - Schrijf correct, natuurlijk Nederlands op het niveau van een goede regionale krant. Gebruik je een vakterm, leg die dan kort uit in een bijzin.
-- Kort en bondig: houd je aan het aantal zinnen dat in de opdracht staat.
+- Kort en bondig: houd je strikt aan het aantal zinnen dat in de opdracht staat. Liever drie sterke zinnen dan vijf.
 - Vermijd lege clichés zoals "luister naar de burger", "samen sterk", "we nemen het mee" en "we komen erop terug". Zeg concreet wat de fractie wil.
-- Antwoord ALTIJD uitsluitend met één JSON-object in het formaat dat de opdracht vraagt. Geen tekst ervoor of erna.
+- Antwoord ALTIJD uitsluitend met één JSON-object in het formaat dat de opdracht vraagt: begin direct met { en eindig met }. Geen uitleg, geen codeblok, geen tekst ervoor of erna.
 
 ## De fracties
+De coalitie bestaat uit SGP, CDA en Gemeentebelang (16 van de 25 zetels); ChristenUnie, FvD, VVD en PRO vormen de oppositie. Coalitiefracties zijn gebonden aan het coalitieakkoord, maar hebben elk hun eigen accenten.
+
 ${fractieBlok}
 
 ## Dossier: ${d.titel || dossier.titel}
@@ -222,16 +269,29 @@ function fractieNaam(fracties, id) {
   return (fracties.find(f => f.id === id) || {}).naam || id;
 }
 
+export function heeftAmendement(sessie) {
+  return !!(sessie?.amendement && typeof sessie.amendement.tekst === 'string' && sessie.amendement.tekst.trim());
+}
+
 function spelerRegel(sessie, fracties) {
   const naam = fractieNaam(fracties, sessie.speler_fractie);
-  return `De leerling speelt de fractie ${naam} en is ${sessie.speler_positie || 'nog onbeslist'} het raadsvoorstel.\nInbreng van ${naam} in de commissie: «${sessie.speler_inbreng || '(geen inbreng)'}»`;
+  let r = `De leerling speelt de fractie ${naam} en is ${sessie.speler_positie || 'nog onbeslist'} het raadsvoorstel.\nInbreng van ${naam} in de commissie: «${sessie.speler_inbreng || '(geen inbreng)'}»`;
+  if (heeftAmendement(sessie)) {
+    r += `\nAmendement van ${naam} (een voorstel om het raadsvoorstel te wijzigen; de raad stemt eerst over het amendement en daarna over het, eventueel gewijzigde, raadsvoorstel): «${sessie.amendement.tekst}»`;
+  }
+  return r;
 }
 
 function standpuntRegel(sessie, fracties, id) {
   const s = (sessie.standpunten || {})[id];
   if (!s || !s.houding) return `${fractieNaam(fracties, id)}: nog geen standpunt.`;
-  return `${fractieNaam(fracties, id)} (${s.houding}${s.voorwaarde ? `; voorwaarde: ${s.voorwaarde}` : ''}): «${s.tekst || ''}»`;
+  const am = heeftAmendement(sessie) && s.houding_amendement ? `; over het amendement: ${s.houding_amendement}` : '';
+  return `${fractieNaam(fracties, id)} (raadsvoorstel: ${s.houding}${am}${s.voorwaarde ? `; voorwaarde: ${s.voorwaarde}` : ''}): «${s.tekst || ''}»`;
 }
+
+const AM_VELD = (sessie) => heeftAmendement(sessie)
+  ? ', "houding_amendement": "voor" | "tegen" | "twijfel"'
+  : '';
 
 /**
  * Delta-prompt per call. `geschiedenis` is een lijst eerdere berichten
@@ -243,10 +303,11 @@ export function bouwDelta({ soort, sessie, fracties, fractieId, fractieIds, teks
     return `Fase: commissievergadering.
 ${spelerRegel(sessie, fracties)}
 
-Opdracht: geef het openingsstandpunt van de fractie ${fractieNaam(fracties, fractieId)} over het raadsvoorstel, in maximaal 4 zinnen. Reageer waar logisch kort op de inbreng van de leerling, maar blijf bij de eigen waarden van deze fractie. Je mag van de startneiging afwijken als de inbreng daar een goede reden voor geeft.
+Opdracht: geef het openingsstandpunt van de fractie ${fractieNaam(fracties, fractieId)} over het raadsvoorstel, in maximaal 4 zinnen (samen hooguit 90 woorden). Reageer waar logisch kort op de inbreng van de leerling, maar blijf bij de eigen waarden van deze fractie. Je mag van de startneiging afwijken als de inbreng daar een goede reden voor geeft. Kies "twijfel" als de fractie te overtuigen is met een concrete aanpassing.
 
 Antwoord als JSON:
-{"tekst": "...", "houding": "voor" | "tegen" | "twijfel", "voorwaarde": "wat deze fractie concreet nodig heeft om (meer) te steunen, in één zin, of null"}`;
+{"tekst": "...", "houding": "voor" | "tegen" | "twijfel"${AM_VELD(sessie)}, "voorwaarde": "wat deze fractie concreet nodig heeft om (meer) te steunen, in één zin, of null"}
+"houding" gaat over het raadsvoorstel${heeftAmendement(sessie) ? '; "houding_amendement" over het amendement van de leerling' : ''}.`;
   }
 
   if (soort === 'vraag') {
@@ -261,10 +322,13 @@ Eerder ingenomen standpunt: ${standpuntRegel(sessie, fracties, fractieId)}
 ${eerdere ? `\nEerdere vragen aan deze fractie:\n${eerdere}\n` : ''}
 Nieuwe vraag van de leerling aan ${fractieNaam(fracties, fractieId)}: «${tekst}»
 
-Opdracht: beantwoord de vraag namens ${fractieNaam(fracties, fractieId)} in maximaal 3 zinnen. Blijf consistent met het ingenomen standpunt: nuanceren mag, omdraaien niet. Gaat de vraag niet over het dossier, buig dan beleefd terug naar het dossier.
+Opdracht: beantwoord de vraag namens ${fractieNaam(fracties, fractieId)} in maximaal 3 zinnen (samen hooguit 70 woorden). Ga in op het argument of voorstel van de leerling.
+- Is dat argument overtuigend en past het bij de waarden van deze fractie, dan mag de fractie één stap opschuiven (tegen → twijfel → voor, of andersom) en/of haar voorwaarde aanpassen. Zeg dat dan ook in het antwoord.
+- Is het niet overtuigend, leg dan uit wat er nog ontbreekt; de houding blijft dan gelijk.
+- Gaat de vraag niet over het dossier, buig dan beleefd terug naar het dossier.
 
 Antwoord als JSON:
-{"tekst": "..."}`;
+{"tekst": "...", "houding": "voor" | "tegen" | "twijfel"${AM_VELD(sessie)}, "voorwaarde": "wat de fractie nu nog nodig heeft, in één zin, of null"}`;
   }
 
   if (soort === 'onderhandeling') {
@@ -273,9 +337,10 @@ Antwoord als JSON:
     const laatste = beurt >= caps.max_onderhandeling_beurten;
     const gesprek = geschiedenis
       .filter(b => b.soort === 'onderhandeling')
+      .filter(b => (b.rol === 'speler' ? (b.meta?.fracties || []).some(id => ids.includes(id)) : ids.includes(b.fractie_id)))
       .map(b => (b.rol === 'speler' ? `Leerling: «${b.tekst}»` : `${fractieNaam(fracties, b.fractie_id)}: «${b.tekst}»`))
       .join('\n');
-    return `Fase: onderhandeling buiten de vergadering (beurt ${beurt} van ${caps.max_onderhandeling_beurten}).
+    return `Fase: onderhandeling buiten de vergadering (bericht ${beurt} van ${caps.max_onderhandeling_beurten}).
 ${spelerRegel(sessie, fracties)}
 
 Standpunten van de fracties aan tafel:
@@ -283,25 +348,34 @@ ${ids.map(id => '- ' + standpuntRegel(sessie, fracties, id)).join('\n')}
 ${gesprek ? `\nGesprek tot nu toe:\n${gesprek}\n` : ''}
 Nieuw voorstel of bericht van de leerling: «${tekst}»
 
-Opdracht: reageer namens elke fractie aan tafel apart, maximaal 3 zinnen per fractie. Een fractie gaat alleen akkoord als de leerling concreet tegemoetkomt aan haar voorwaarde of een ander serieus argument geeft; beloftes zonder inhoud zijn niet genoeg. ${laatste ? 'Dit is de laatste beurt: geef per fractie een definitief true of false.' : 'Gebruik null als de fractie nog niet beslist.'}
+Opdracht: reageer namens elke fractie aan tafel apart, maximaal 3 zinnen per fractie (hooguit 70 woorden per fractie).
+- Fracties willen resultaat boeken en zijn bereid tot een compromis. Een fractie gaat akkoord ("true") als het voorstel van de leerling haar voorwaarde (grotendeels) invult of op een andere manier goed aansluit bij haar waarden en belangen.
+- Komt het voorstel deels tegemoet, doe dan een concreet tegenvoorstel: "als u ook ..., dan gaan wij mee" en gebruik ${laatste ? 'false' : 'null'}.
+- Een fractie gaat niet akkoord met iets dat recht tegen haar kernwaarden ingaat, of met beloftes zonder inhoud.
+- ${heeftAmendement(sessie) ? '"true" betekent: deze fractie steunt het amendement van de leerling en stemt ervoor.' : `"true" betekent: deze fractie stemt mee met de leerling (${sessie.speler_positie || 'zijn positie'} het raadsvoorstel).`} ${laatste ? 'Dit is het laatste bericht van de leerling: geef per fractie een definitief true of false.' : ''}
 
 Antwoord als JSON:
 {"reacties": [{"fractie": "<id>", "tekst": "..."}], "akkoord": {${ids.map(id => `"${id}": true | false${laatste ? '' : ' | null'}`).join(', ')}}}`;
   }
 
   if (soort === 'stemverklaringen') {
+    const am = uitslag.amendement;
+    const redenTekst = (r) => r === 'akkoord' ? ' (na een akkoord met de leerling)' : r === 'geen_akkoord' ? ' (onderhandeling leverde geen akkoord op)' : '';
     const regels = Object.entries(uitslag.stemmen)
       .filter(([id]) => id !== sessie.speler_fractie)
-      .map(([id, stem]) => `- ${standpuntRegel(sessie, fracties, id)} → stemt ${stem.stem.toUpperCase()}${stem.reden === 'akkoord' ? ' (na een akkoord met de leerling)' : stem.reden === 'geen_akkoord' ? ' (onderhandeling leverde geen akkoord op)' : ''}`)
+      .map(([id, stem]) => `- ${standpuntRegel(sessie, fracties, id)}${am ? ` → amendement: ${am.stemmen[id].stem.toUpperCase()}` : ''} → raadsvoorstel: ${stem.stem.toUpperCase()}${redenTekst(stem.reden)}`)
       .join('\n');
+    const amRegel = am
+      ? `Stemming over het amendement: ${am.voor} voor, ${am.tegen} tegen; het amendement is ${am.aangenomen ? 'aangenomen' : 'verworpen'}.\nDaarna stemming over het ${am.aangenomen ? 'gewijzigde ' : ''}raadsvoorstel: `
+      : 'Uitslag: ';
     return `Fase: stemming in de raad. De stemmen liggen vast; verander ze niet.
 ${spelerRegel(sessie, fracties)}
 
 ${regels}
 
-Uitslag: ${uitslag.voor} stemmen voor, ${uitslag.tegen} tegen. Het raadsvoorstel is ${uitslag.aangenomen ? 'aangenomen' : 'verworpen'}.
+${amRegel}${uitslag.voor} stemmen voor, ${uitslag.tegen} tegen. Het raadsvoorstel is ${uitslag.aangenomen ? 'aangenomen' : 'verworpen'}.
 
-Opdracht: geef per fractie hierboven een stemverklaring van maximaal 2 zinnen die past bij haar standpunt en het verloop.
+Opdracht: geef per fractie hierboven één stemverklaring van maximaal 2 zinnen (hooguit 45 woorden) die past bij haar standpunt en het verloop${am ? ', en die waar dat logisch is beide stemmingen kort verklaart' : ''}.
 
 Antwoord als JSON:
 {"verklaringen": {"<fractie-id>": "..."}}`;
@@ -314,41 +388,73 @@ Antwoord als JSON:
 // STEMMING — regelgebaseerd, géén AI (scenario 2)
 // ─────────────────────────────────────────────────────────────
 /**
- * Stemregels (ontwerpkeuze, ter beoordeling door game-design):
+ * Stemregels (ontwerpkeuze, ter beoordeling door game-design).
+ *
+ * ZONDER amendement:
  * 1. Speler stemt zelf (spelerStem).
  * 2. Fractie met een akkoord uit de onderhandeling stemt zoals de speler.
  * 3. Anders: houding "voor" → voor, "tegen" → tegen.
  * 4. "twijfel" zonder akkoord: coalitiefracties steunen het collegevoorstel,
  *    oppositiefracties stemmen tegen (er bestaat geen onthouding in de raad).
- * Fracties zonder (geldig) openingsstandpunt vallen terug op de startneiging
- * uit het dossier.
+ *
+ * MET amendement (eerst amendement, dan het eventueel gewijzigde voorstel):
+ * - Amendement: speler voor; akkoord → voor; anders houding_amendement;
+ *   "twijfel" → voor als de fractie in hetzelfde blok zit als de speler
+ *   (coalitie/oppositie), anders tegen.
+ * - Raadsvoorstel: houding over het voorstel. Is het amendement aangenomen
+ *   en stemde de fractie daarvoor, dan wordt "twijfel" → voor (haar wens zit
+ *   er nu in). Overige "twijfel": regel 4. Een akkoord ging over het
+ *   amendement en bepaalt hier niet direct de stem.
+ * Fracties zonder (geldig) standpunt vallen terug op de startneiging.
  */
-export function berekenStemming({ fracties, standpunten = {}, akkoord = {}, spelerFractie, spelerStem, hints = {} }) {
-  const stemmen = {};
+function telStemmen(stemmen, fracties) {
   let voor = 0, tegen = 0;
+  for (const f of fracties) { if (stemmen[f.id].stem === 'voor') voor += f.zetels; else tegen += f.zetels; }
+  return { stemmen, voor, tegen, aangenomen: voor > (voor + tegen) / 2 };
+}
+
+export function berekenAmendementStemming({ fracties, standpunten = {}, akkoord = {}, spelerFractie }) {
+  const blokSpeler = (fracties.find(f => f.id === spelerFractie) || {}).positie;
+  const stemmen = {};
+  for (const f of fracties) {
+    let stem, reden;
+    if (f.id === spelerFractie) { stem = 'voor'; reden = 'speler'; }
+    else if (akkoord[f.id] === true) { stem = 'voor'; reden = 'akkoord'; }
+    else {
+      const h = normaliseerHouding(standpunten[f.id]?.houding_amendement, 'twijfel');
+      if (h === 'twijfel') { stem = f.positie === blokSpeler ? 'voor' : 'tegen'; reden = akkoord[f.id] === false ? 'geen_akkoord' : 'twijfel'; }
+      else { stem = h; reden = akkoord[f.id] === false ? 'geen_akkoord' : 'standpunt'; }
+    }
+    stemmen[f.id] = { stem, reden, zetels: f.zetels };
+  }
+  return telStemmen(stemmen, fracties);
+}
+
+export function berekenStemming({ fracties, standpunten = {}, akkoord = {}, spelerFractie, spelerStem, hints = {}, amendement = null }) {
+  const stemmen = {};
   for (const f of fracties) {
     let stem, reden;
     if (f.id === spelerFractie) {
       stem = spelerStem === 'voor' ? 'voor' : 'tegen';
       reden = 'speler';
-    } else if (akkoord[f.id] === true) {
+    } else if (!amendement && akkoord[f.id] === true) {
       stem = spelerStem === 'voor' ? 'voor' : 'tegen';
       reden = 'akkoord';
     } else {
       const houding = normaliseerHouding(standpunten[f.id]?.houding, normaliseerHouding(hints[f.id]?.neiging));
       if (houding === 'twijfel') {
-        stem = f.positie === 'coalitie' ? 'voor' : 'tegen';
-        reden = akkoord[f.id] === false ? 'geen_akkoord' : 'twijfel';
+        if (amendement?.aangenomen && amendement.stemmen?.[f.id]?.stem === 'voor') { stem = 'voor'; reden = 'amendement'; }
+        else { stem = f.positie === 'coalitie' ? 'voor' : 'tegen'; reden = !amendement && akkoord[f.id] === false ? 'geen_akkoord' : 'twijfel'; }
       } else {
         stem = houding;
-        reden = akkoord[f.id] === false ? 'geen_akkoord' : 'standpunt';
+        reden = !amendement && akkoord[f.id] === false ? 'geen_akkoord' : 'standpunt';
       }
     }
     stemmen[f.id] = { stem, reden, zetels: f.zetels };
-    if (stem === 'voor') voor += f.zetels; else tegen += f.zetels;
   }
-  const totaal = voor + tegen;
-  return { stemmen, voor, tegen, aangenomen: voor > totaal / 2 };
+  const uit = telStemmen(stemmen, fracties);
+  if (amendement) uit.amendement = amendement;
+  return uit;
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -362,12 +468,17 @@ export function fallbackAntwoord({ soort, sessie, fracties, fractieId, fractieId
     return {
       tekst: h.fallback_standpunt || `De fractie van ${naam(fractieId)} wil eerst de gevolgen van het voorstel goed op een rij hebben voordat zij een definitief oordeel geeft.`,
       houding: normaliseerHouding(h.neiging),
+      ...(heeftAmendement(sessie) ? { houding_amendement: 'twijfel' } : {}),
       voorwaarde: h.voorwaarde || null,
     };
   }
   if (soort === 'vraag') {
     const s = (sessie.standpunten || {})[fractieId];
-    return { tekst: `De fractie van ${naam(fractieId)} verwijst naar het eerder ingenomen standpunt${s?.tekst ? `: «${s.tekst}»` : '.'}` };
+    return {
+      tekst: `De fractie van ${naam(fractieId)} verwijst naar het eerder ingenomen standpunt${s?.tekst ? `: «${s.tekst}»` : '.'}`,
+      houding: s?.houding || null, voorwaarde: s?.voorwaarde ?? null, houding_was: s?.houding || null,
+      ...(s?.houding_amendement ? { houding_amendement: s.houding_amendement } : {}),
+    };
   }
   if (soort === 'onderhandeling') {
     const ids = fractieIds || [];
@@ -391,20 +502,33 @@ export function fallbackAntwoord({ soort, sessie, fracties, fractieId, fractieId
  * Normaliseer modeloutput naar de vorm die de rest van de code verwacht.
  * Valt per veld terug op de fallback als het model iets onbruikbaars gaf.
  */
-export function normaliseerAntwoord(soort, parsed, fallback, { fractieIds = [], laatsteBeurt = false } = {}) {
+export function normaliseerAntwoord(soort, parsed, fallback, { fractieIds = [], laatsteBeurt = false, huidig = null, metAmendement = false } = {}) {
   if (!parsed || typeof parsed !== 'object') return { ...fallback, _parseFout: true };
   if (soort === 'opening') {
     const tekst = typeof parsed.tekst === 'string' && parsed.tekst.trim() ? parsed.tekst.trim() : null;
     if (!tekst) return { ...fallback, _parseFout: true };
-    return {
+    const uit = {
       tekst,
       houding: normaliseerHouding(parsed.houding, fallback.houding),
       voorwaarde: typeof parsed.voorwaarde === 'string' && parsed.voorwaarde.trim() ? parsed.voorwaarde.trim() : null,
     };
+    if (metAmendement) uit.houding_amendement = normaliseerHouding(parsed.houding_amendement, 'twijfel');
+    return uit;
   }
   if (soort === 'vraag') {
     const tekst = typeof parsed.tekst === 'string' && parsed.tekst.trim() ? parsed.tekst.trim() : null;
-    return tekst ? { tekst } : { ...fallback, _parseFout: true };
+    if (!tekst) return { ...fallback, _parseFout: true };
+    const oud = huidig?.houding;
+    const houding = beperkStap(oud, normaliseerHouding(parsed.houding, oud || 'twijfel'));
+    const voorwaarde = parsed.voorwaarde === null ? null
+      : (typeof parsed.voorwaarde === 'string' && parsed.voorwaarde.trim() ? parsed.voorwaarde.trim() : (huidig?.voorwaarde ?? null));
+    const uit = { tekst, houding, voorwaarde, houding_was: oud || null };
+    if (metAmendement) {
+      const oudAm = huidig?.houding_amendement || 'twijfel';
+      uit.houding_amendement = beperkStap(oudAm, normaliseerHouding(parsed.houding_amendement, oudAm));
+      uit.houding_amendement_was = oudAm;
+    }
+    return uit;
   }
   if (soort === 'onderhandeling') {
     const reacties = Array.isArray(parsed.reacties)

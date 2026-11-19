@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import {
   DEFAULT_CONFIG, mergeConfig, configUitEnv, modelVoor, berekenKosten, parseJsonUitTekst,
   berekenStemming, vermijdHits, schoonInvoer, normaliseerAntwoord, fallbackAntwoord, bouwDelta, bouwStatischePrompt,
+  redAfgekapteJson, beperkStap, berekenAmendementStemming,
 } from '../netlify/functions/lib/sp-shared.mjs';
 
 const FRACTIES = [
@@ -43,11 +44,11 @@ test('sessiekosten scenario 2 vallen binnen de bandbreedte uit het voorstel', ()
   // 6 openingen (1e schrijft cache), 12 vragen (1e schrijft cache), 4 onderhandeling, 1 stemming
   const S = 'claude-sonnet-5-5', H = 'claude-haiku-5-5', STAT = 2200;
   let totaal = 0;
-  const sonnet = [...Array(11)].map((_, i) => ({ input_tokens: 450, output_tokens: 220, [i === 0 ? 'cache_creation_input_tokens' : 'cache_read_input_tokens']: STAT }));
+  const sonnet = [...Array(13)].map((_, i) => ({ input_tokens: 450, output_tokens: 220, [i === 0 ? 'cache_creation_input_tokens' : 'cache_read_input_tokens']: STAT }));
   const haiku = [...Array(12)].map((_, i) => ({ input_tokens: 500, output_tokens: 120, [i === 0 ? 'cache_creation_input_tokens' : 'cache_read_input_tokens']: STAT }));
   sonnet.forEach(u => { totaal += berekenKosten(u, S, DEFAULT_CONFIG); });
   haiku.forEach(u => { totaal += berekenKosten(u, H, DEFAULT_CONFIG); });
-  assert.ok(totaal > 0.03 && totaal < 0.07, `sessiekosten ${totaal.toFixed(4)} buiten verwachting`);
+  assert.ok(totaal > 0.03 && totaal < 0.08, `sessiekosten ${totaal.toFixed(4)} buiten verwachting`);
   assert.ok(totaal < DEFAULT_CONFIG.caps.max_kosten_usd);
 });
 
@@ -120,4 +121,63 @@ test('prompts: statisch deel bevat geen sessie-inhoud, delta wel', () => {
   const delta = bouwDelta({ soort: 'opening', sessie, fracties: FRACTIES, fractieId: 'sgp' });
   assert.ok(delta.includes('GEHEIME-INBRENG'));
   assert.ok(delta.length < 1500, 'delta blijft klein');
+});
+
+test('afgekapte JSON: tekst redden tot de laatste volledige zin', () => {
+  const afgekapt = '{"tekst": "Wij zien voordelen in snel bouwen. Wel maken wij ons zorgen over het verkeer op de toegangsweg. Daarom vragen wij het college om een toezeg';
+  const r = redAfgekapteJson(afgekapt);
+  assert.equal(r.tekst, 'Wij zien voordelen in snel bouwen. Wel maken wij ons zorgen over het verkeer op de toegangsweg.');
+  assert.equal(r.houding, undefined);
+  const metHouding = redAfgekapteJson('{"tekst": "Prima voorstel.", "houding": "voor", "voorwaarde": "dat het verk');
+  assert.deepEqual(metHouding, { tekst: 'Prima voorstel.', houding: 'voor' });
+  assert.equal(redAfgekapteJson('{"tekst": "Wij'), null, 'te weinig over om te redden');
+  assert.deepEqual(redAfgekapteJson('{"tekst": "Een \\"aanhaling\\" hier."}'), { tekst: 'Een "aanhaling" hier.' });
+});
+
+test('houding schuift per vraag maximaal één stap', () => {
+  assert.equal(beperkStap('tegen', 'voor'), 'twijfel');
+  assert.equal(beperkStap('voor', 'tegen'), 'twijfel');
+  assert.equal(beperkStap('twijfel', 'voor'), 'voor');
+  assert.equal(beperkStap('tegen', 'tegen'), 'tegen');
+  const n = normaliseerAntwoord('vraag', { tekst: 'Goed punt, wij gaan mee.', houding: 'voor', voorwaarde: null },
+    { tekst: 'fb' }, { huidig: { houding: 'tegen', voorwaarde: 'eerst onderzoek' } });
+  assert.deepEqual(n, { tekst: 'Goed punt, wij gaan mee.', houding: 'twijfel', voorwaarde: null, houding_was: 'tegen' });
+  const zonderVoorwaarde = normaliseerAntwoord('vraag', { tekst: 'Nee.', houding: 'tegen' },
+    { tekst: 'fb' }, { huidig: { houding: 'tegen', voorwaarde: 'eerst onderzoek' } });
+  assert.equal(zonderVoorwaarde.voorwaarde, 'eerst onderzoek', 'ontbrekende voorwaarde blijft staan');
+});
+
+test('max_tokens ruim genoeg voor de gevraagde lengte', () => {
+  // ~90 woorden NL ≈ 160–200 tokens + JSON-overhead; plafond moet daar ruim boven zitten
+  assert.ok(DEFAULT_CONFIG.max_tokens.opening >= 600);
+  assert.ok(DEFAULT_CONFIG.max_tokens.vraag >= 400);
+  assert.ok(DEFAULT_CONFIG.max_tokens.onderhandeling >= 2 * 400);
+  assert.ok(DEFAULT_CONFIG.max_tokens.stemverklaringen >= 6 * 150);
+});
+
+test('amendementstemming: speler, akkoord, houding en blokregel bij twijfel', () => {
+  const standpunten = {
+    sgp: { houding: 'voor', houding_amendement: 'tegen' }, cda: { houding: 'voor', houding_amendement: 'twijfel' },
+    gb: { houding: 'twijfel', houding_amendement: 'twijfel' }, fvd: { houding: 'tegen', houding_amendement: 'voor' },
+    vvd: { houding: 'voor', houding_amendement: 'tegen' }, pro: { houding: 'tegen', houding_amendement: 'twijfel' },
+  };
+  const am = berekenAmendementStemming({ fracties: FRACTIES, standpunten, akkoord: { gb: true }, spelerFractie: 'cu' });
+  assert.equal(am.stemmen.cu.stem, 'voor');
+  assert.equal(am.stemmen.gb.stem, 'voor', 'akkoord');
+  assert.equal(am.stemmen.cda.stem, 'tegen', 'twijfel, ander blok (coalitie vs oppositie-speler)');
+  assert.equal(am.stemmen.pro.stem, 'voor', 'twijfel, zelfde blok als speler');
+  assert.equal(am.stemmen.fvd.stem, 'voor');
+  assert.equal(am.voor, 3 + 4 + 3 + 1);
+  assert.equal(am.aangenomen, false);
+
+  // aangenomen amendement trekt twijfelaars die ervoor stemden over de streep
+  const amAan = { ...am, aangenomen: true };
+  const eind = berekenStemming({ fracties: FRACTIES, standpunten, akkoord: { gb: true }, spelerFractie: 'cu', spelerStem: 'voor', amendement: amAan });
+  assert.equal(eind.stemmen.gb.stem, 'voor'); assert.equal(eind.stemmen.gb.reden, 'amendement');
+  assert.equal(eind.stemmen.pro.stem, 'tegen', 'houding tegen blijft tegen');
+  assert.equal(eind.stemmen.fvd.stem, 'tegen');
+  assert.ok(eind.amendement);
+  // met amendement telt een akkoord niet als 'stemt mee' bij het voorstel
+  const eind2 = berekenStemming({ fracties: FRACTIES, standpunten: { ...standpunten, gb: { houding: 'tegen' } }, akkoord: { gb: true }, spelerFractie: 'cu', spelerStem: 'voor', amendement: { ...am, aangenomen: false } });
+  assert.equal(eind2.stemmen.gb.stem, 'tegen');
 });

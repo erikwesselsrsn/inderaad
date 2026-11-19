@@ -4,7 +4,7 @@
  * POST /api/npc-fractie
  *   { sessie_id, soort: "opening",          fractie_id }
  *   { sessie_id, soort: "vraag",            fractie_id, tekst }
- *   { sessie_id, soort: "onderhandeling",   fracties: [id, id?] (alleen 1e beurt), tekst }
+ *   { sessie_id, soort: "onderhandeling",   fracties: [id, id?], tekst }   (per bericht 1–2 fracties naar keuze)
  *   { sessie_id, soort: "stemverklaringen", speler_stem: "voor" | "tegen" }
  *
  * Eén function-call = maximaal één Claude-call (Netlify-timeout). Openings-
@@ -16,6 +16,7 @@
 import {
   SOORTEN, modelVoor, berekenKosten, schoonInvoer, vermijdHits, parseJsonUitTekst,
   bouwStatischePrompt, bouwDelta, berekenStemming, fallbackAntwoord, normaliseerAntwoord, tekstenVan,
+  redAfgekapteJson, heeftAmendement,
 } from './lib/sp-shared.mjs';
 import {
   json, verifieerGebruiker, rpc, select, laadConfig, laadFracties, laadDossier, roepClaudeAan,
@@ -25,6 +26,7 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const HARDE_WEIGERING = {
   onbekende_sessie: 404, afgerond: 409, geen_inbreng: 409, ongeldige_fractie: 400, ongeldige_fracties: 400,
   al_geopend: 409, nog_geen_standpunt: 409, vragencap: 429, onderhandeling_cap: 429, al_bezig: 409, onbekende_soort: 400,
+  eerst_amendement: 409,
 };
 
 export default async (req) => {
@@ -49,6 +51,7 @@ export default async (req) => {
   const tekst = schoonInvoer(body.tekst, config.max_tekst);
   if ((soort === 'opening' || soort === 'vraag') && !fractieId) return json(400, { error: 'Onbekende fractie' });
   if ((soort === 'vraag' || soort === 'onderhandeling') && !tekst) return json(400, { error: 'Lege tekst' });
+  if (soort === 'onderhandeling' && !(gevraagdeFracties?.length)) return json(400, { error: 'Kies een fractie', reden: 'ongeldige_fracties' });
 
   // ── 1. Atomaire reservering (caps + circuit breaker) ──
   let res;
@@ -64,7 +67,7 @@ export default async (req) => {
   if (!dossier) return json(500, { error: 'Dossier ontbreekt' });
   const hints = dossier.inhoud?.fractie_hints || {};
 
-  const onderhFracties = soort === 'onderhandeling' ? (sessie.onderhandeling?.fracties || []) : [];
+  const onderhFracties = soort === 'onderhandeling' ? [...new Set(gevraagdeFracties)] : [];
   const laatsteBeurt = soort === 'onderhandeling' && (sessie.onderhandeling?.beurten || 0) >= sessie.caps.max_onderhandeling_beurten;
 
   let uitslag = null;
@@ -73,6 +76,7 @@ export default async (req) => {
     uitslag = berekenStemming({
       fracties, standpunten: sessie.standpunten, akkoord: sessie.onderhandeling?.akkoord || {},
       spelerFractie: sessie.speler_fractie, spelerStem, hints,
+      amendement: heeftAmendement(sessie) ? (sessie.amendement.uitslag || null) : null,
     });
     uitslag.speler_stem = spelerStem;
   }
@@ -83,7 +87,7 @@ export default async (req) => {
     if (soort === 'vraag') {
       geschiedenis = await select(`sp_berichten?sessie_id=eq.${sessie_id}&soort=eq.vraag&fractie_id=eq.${fractieId}&select=rol,fractie_id,soort,tekst&order=id.asc`);
     } else if (soort === 'onderhandeling') {
-      geschiedenis = await select(`sp_berichten?sessie_id=eq.${sessie_id}&soort=eq.onderhandeling&select=rol,fractie_id,soort,tekst&order=id.asc&limit=24`);
+      geschiedenis = await select(`sp_berichten?sessie_id=eq.${sessie_id}&soort=eq.onderhandeling&select=rol,fractie_id,soort,tekst,meta&order=id.asc&limit=40`);
     }
   } catch (e) { console.warn('[npc-fractie] geschiedenis niet geladen', e.message); }
 
@@ -105,8 +109,15 @@ export default async (req) => {
         config,
       });
       usage = r.usage; latency = r.latency;
-      antwoord = normaliseerAntwoord(soort, parseJsonUitTekst(r.tekst), fallback, { fractieIds: onderhFracties, laatsteBeurt });
-      if (antwoord._parseFout) fallbackReden = 'parse';
+      let parsed = parseJsonUitTekst(r.tekst);
+      let gered = false;
+      if (!parsed && (soort === 'opening' || soort === 'vraag')) { parsed = redAfgekapteJson(r.tekst); gered = !!parsed; }
+      antwoord = normaliseerAntwoord(soort, parsed, fallback, {
+        fractieIds: onderhFracties, laatsteBeurt, huidig: sessie.standpunten?.[fractieId], metAmendement: heeftAmendement(sessie),
+      });
+      if (antwoord._parseFout) fallbackReden = 'parse' + (r.stop === 'max_tokens' ? ' (max_tokens)' : '');
+      else if (gered) console.warn('[npc-fractie] afgekapt antwoord gered', { soort, stop: r.stop });
+      if (r.stop === 'max_tokens') console.warn('[npc-fractie] max_tokens bereikt', { soort, output: usage.output_tokens });
     } catch (e) {
       console.error('[npc-fractie] Claude-fout', e.message);
       fallbackReden = 'fout: ' + e.message.slice(0, 120);
@@ -124,16 +135,16 @@ export default async (req) => {
   // ── 4. Registreren ──
   const berichten = [];
   if (soort === 'vraag') berichten.push({ rol: 'speler', fractie_id: fractieId, soort, tekst, meta: {} });
-  if (soort === 'onderhandeling') berichten.push({ rol: 'speler', fractie_id: null, soort, tekst, meta: { beurt: sessie.onderhandeling?.beurten } });
-  if (soort === 'opening') berichten.push({ rol: 'npc', fractie_id: fractieId, soort, tekst: antwoord.tekst, meta: { houding: antwoord.houding, voorwaarde: antwoord.voorwaarde, fallback: isFallback } });
-  if (soort === 'vraag') berichten.push({ rol: 'npc', fractie_id: fractieId, soort, tekst: antwoord.tekst, meta: { fallback: isFallback } });
+  if (soort === 'onderhandeling') berichten.push({ rol: 'speler', fractie_id: null, soort, tekst, meta: { beurt: sessie.onderhandeling?.beurten, fracties: onderhFracties } });
+  if (soort === 'opening') berichten.push({ rol: 'npc', fractie_id: fractieId, soort, tekst: antwoord.tekst, meta: { houding: antwoord.houding, houding_amendement: antwoord.houding_amendement, voorwaarde: antwoord.voorwaarde, fallback: isFallback } });
+  if (soort === 'vraag') berichten.push({ rol: 'npc', fractie_id: fractieId, soort, tekst: antwoord.tekst, meta: { fallback: isFallback, houding: antwoord.houding, houding_was: antwoord.houding_was, houding_amendement: antwoord.houding_amendement, houding_amendement_was: antwoord.houding_amendement_was } });
   if (soort === 'onderhandeling') for (const r of antwoord.reacties) berichten.push({ rol: 'npc', fractie_id: r.fractie, soort, tekst: r.tekst, meta: { akkoord: antwoord.akkoord[r.fractie] ?? null, fallback: isFallback } });
   if (soort === 'stemverklaringen') for (const [id, v] of Object.entries(antwoord.verklaringen)) berichten.push({ rol: 'npc', fractie_id: id, soort, tekst: v, meta: { stem: uitslag.stemmen[id]?.stem, fallback: isFallback } });
 
   const volledigeUitslag = uitslag ? { ...uitslag, verklaringen: antwoord.verklaringen } : null;
   try {
     await rpc('sp_registreer_call', {
-      p_sessie: sessie_id, p_user: userId, p_soort: soort, p_fractie: soort === 'opening' ? fractieId : null,
+      p_sessie: sessie_id, p_user: userId, p_soort: soort, p_fractie: (soort === 'opening' || soort === 'vraag') ? fractieId : null,
       p_log: {
         model: res.budget_ok ? model : null,
         input_tokens: usage.input_tokens || 0,
@@ -143,7 +154,13 @@ export default async (req) => {
         kosten_usd: kosten, latency_ms: latency, fallback: isFallback, fallback_reden: fallbackReden, vermijd_hits: hits,
       },
       p_berichten: berichten,
-      p_standpunt: soort === 'opening' ? { houding: antwoord.houding, voorwaarde: antwoord.voorwaarde, tekst: antwoord.tekst } : null,
+      p_standpunt: soort === 'opening'
+        ? { houding: antwoord.houding, voorwaarde: antwoord.voorwaarde, tekst: antwoord.tekst,
+            ...(antwoord.houding_amendement ? { houding_amendement: antwoord.houding_amendement } : {}) }
+        : (soort === 'vraag' && !isFallback && antwoord.houding)
+          ? { ...sessie.standpunten[fractieId], houding: antwoord.houding, voorwaarde: antwoord.voorwaarde,
+              ...(antwoord.houding_amendement ? { houding_amendement: antwoord.houding_amendement } : {}) }
+          : null,
       p_akkoord: soort === 'onderhandeling' ? antwoord.akkoord : null,
       p_uitslag: volledigeUitslag,
     });

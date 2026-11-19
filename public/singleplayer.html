@@ -98,6 +98,16 @@ textarea:focus, input[type=text]:focus { border-color: var(--accent); }
 ol.reflectie { padding-left: 1.2rem; }
 ol.reflectie li { margin-bottom: .5rem; }
 .hint { font-size: 13px; color: var(--ink-3); font-style: italic; }
+.verschuiving { font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: .06em; color: var(--success); background: #E8F2EC; border: 1px solid #C0DCC8; padding: 1px 6px; border-radius: 2px; margin-left: 4px; white-space: nowrap; }
+.verschuiving.terug { color: var(--accent); background: #F5EDE8; border-color: #E0C4B8; }
+.chat .ik .aan { font-family: 'JetBrains Mono', monospace; font-size: 10px; color: var(--ink-3); letter-spacing: .06em; text-transform: uppercase; margin-bottom: 2px; }
+.keuze .status { margin-top: 6px; }
+.amendement-kaart { border-left: 4px solid var(--accent-2); background: #FFFBF6; }
+.amendement-kaart .kop { font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: .12em; text-transform: uppercase; color: var(--accent-2); margin-bottom: .4rem; display: flex; gap: 8px; align-items: center; }
+.amendement-kaart textarea { margin-top: .5rem; }
+.badge-am { font-family: 'JetBrains Mono', monospace; font-size: 9px; letter-spacing: .08em; padding: 2px 6px; border-radius: 2px; border: 1px dashed var(--accent-2); color: var(--accent-2); }
+.stemblok { margin-bottom: 1.5rem; }
+.stemblok h2 { margin-top: .5rem; }
 @media (max-width: 640px) { .stemrij { flex-wrap: wrap; } .stemrij .wie { width: auto; } }
 </style>
 </head>
@@ -176,6 +186,9 @@ ol.reflectie li { margin-bottom: .5rem; }
     <textarea id="fo-inbreng" rows="5" maxlength="600" placeholder="Bijvoorbeeld: welk punt vind je het belangrijkst, wat wil je veranderen en waarom?"></textarea>
     <div class="teller"><span id="fo-teller">0</span>/600</div>
     <p class="hint">Je inbreng is het eerste wat de andere fracties van je horen. Wees concreet: wat wil je, en wat heb je ervoor over?</p>
+    <label class="eyebrow" for="fo-amendement" style="display:block;margin-top:1.25rem">Amendement (optioneel)</label>
+    <textarea id="fo-amendement" rows="3" maxlength="600" placeholder="Bijvoorbeeld: het aandeel sociale huur gaat van 30% naar 40%."></textarea>
+    <p class="hint">Met een amendement stel je voor het raadsvoorstel te wijzigen. De raad stemt eerst over je amendement en daarna over het (eventueel gewijzigde) voorstel. Je kunt het later nog aanpassen, tot de stemming.</p>
     <div class="acties"><button class="btn btn-primary" id="btn-inbreng" disabled>Inbreng indienen →</button></div>
   </section>
 
@@ -185,6 +198,7 @@ ol.reflectie li { margin-bottom: .5rem; }
     <h1>De andere fracties reageren</h1>
     <p class="lead">Lees de standpunten. Je mag elke fractie <b>twee vragen</b> stellen. Let op wat een fractie nodig heeft om je te steunen.</p>
     <div class="card fractie" id="cm-eigen"></div>
+    <div class="card amendement-kaart" id="cm-amendement"></div>
     <div id="cm-fracties"></div>
     <div class="acties">
       <button class="btn btn-primary" id="btn-naar-onderhandeling" disabled>Onderhandelen (optioneel) →</button>
@@ -196,16 +210,13 @@ ol.reflectie li { margin-bottom: .5rem; }
   <section class="screen" id="s-onderhandeling">
     <p class="eyebrow">Fase 4 — Onderhandeling</p>
     <h1>Steun zoeken</h1>
-    <p class="lead">Kies <b>één of twee fracties</b> om mee te onderhandelen. Je hebt <b>vier berichten</b>. Een fractie gaat alleen om als je haar iets concreets biedt.</p>
-    <div id="oh-kiezen">
-      <div class="grid" id="oh-fractiekeuze"></div>
-    </div>
-    <div id="oh-gesprek" style="display:none">
-      <div class="acties" id="oh-akkoord" style="margin:0 0 1rem"></div>
-      <div class="chat" id="oh-chat"></div>
-      <textarea id="oh-invoer" rows="3" maxlength="600" placeholder="Doe een voorstel…"></textarea>
-      <div class="teller"><span id="oh-over">4</span> berichten over</div>
-    </div>
+    <p class="lead">Je hebt <b><span id="oh-totaal">6</span> berichten</b>. Kies per bericht met welke fractie je praat, of met twee tegelijk. Je mag wisselen wanneer je wilt. Een fractie die akkoord gaat, stemt met jou mee.</p>
+    <div class="card amendement-kaart" id="oh-amendement"></div>
+    <div class="grid" id="oh-fractiekeuze"></div>
+    <div class="chat" id="oh-chat"></div>
+    <label class="eyebrow" for="oh-invoer" style="display:block">Bericht aan <span id="oh-aan">— kies hierboven een fractie —</span></label>
+    <textarea id="oh-invoer" rows="3" maxlength="600" placeholder="Doe een voorstel…"></textarea>
+    <div class="teller"><span id="oh-over">6</span> berichten over</div>
     <div class="acties">
       <button class="btn btn-primary" id="btn-oh-stuur" disabled>Versturen</button>
       <button class="btn btn-ghost" id="btn-naar-stemming">Naar de stemming →</button>
@@ -215,24 +226,40 @@ ol.reflectie li { margin-bottom: .5rem; }
   <!-- STEMMING -->
   <section class="screen" id="s-stemming">
     <p class="eyebrow">Fase 5 — Stemming in de raad</p>
-    <h1 id="st-titel">Hoe stemt jouw fractie?</h1>
-    <div id="st-kiezen">
-      <p class="lead">In de gemeenteraad kun je je niet van stemming onthouden: het is voor of tegen.</p>
-      <div class="seg" id="st-stem">
-        <button data-stem="voor">Voor</button>
-        <button data-stem="tegen">Tegen</button>
+    <h1 id="st-titel">Stemming</h1>
+    <p class="lead">In de gemeenteraad kun je je niet van stemming onthouden: het is voor of tegen.</p>
+    <!-- stap 1: amendement (alleen als er een is) -->
+    <div class="stemblok" id="st-am-blok" style="display:none">
+      <h2>1. Stemming over het amendement</h2>
+      <div class="card amendement-kaart"><div class="kop">Jouw amendement</div><p id="st-am-tekst"></p></div>
+      <div class="acties" id="st-am-acties"><button class="btn btn-primary" id="btn-stem-am">Stemming over het amendement →</button></div>
+      <div id="st-am-uitslag" style="display:none">
+        <div class="uitslag-kop" id="st-am-kop" style="font-size:22px"></div>
+        <div class="uitslagbalk" id="st-am-balk"></div>
+        <p class="mono" style="font-size:11px;color:var(--ink-3)" id="st-am-cijfers"></p>
       </div>
-      <div class="acties"><button class="btn btn-primary" id="btn-stem">Stemming openen →</button></div>
     </div>
-    <div id="st-uitslag" style="display:none">
-      <div class="uitslag-kop" id="st-kop"></div>
-      <div class="uitslagbalk" id="st-balk"></div>
-      <p class="mono" style="font-size:11px;color:var(--ink-3)" id="st-cijfers"></p>
-      <h2>Stemverklaringen</h2>
-      <div class="card" id="st-verklaringen"></div>
-      <h2>Terugblik</h2>
-      <div class="card"><ol class="reflectie" id="st-reflectie"></ol></div>
-      <div class="acties"><button class="btn btn-primary" id="btn-opnieuw">Nieuw spel</button></div>
+    <!-- stap 2: raadsvoorstel -->
+    <div class="stemblok" id="st-vs-blok">
+      <h2 id="st-vs-titel">Stemming over het raadsvoorstel</h2>
+      <div id="st-kiezen">
+        <p>Hoe stemt jouw fractie?</p>
+        <div class="seg" id="st-stem">
+          <button data-stem="voor">Voor</button>
+          <button data-stem="tegen">Tegen</button>
+        </div>
+        <div class="acties"><button class="btn btn-primary" id="btn-stem">Stemming openen →</button></div>
+      </div>
+      <div id="st-uitslag" style="display:none">
+        <div class="uitslag-kop" id="st-kop"></div>
+        <div class="uitslagbalk" id="st-balk"></div>
+        <p class="mono" style="font-size:11px;color:var(--ink-3)" id="st-cijfers"></p>
+        <h2>Stemverklaringen</h2>
+        <div class="card" id="st-verklaringen"></div>
+        <h2>Terugblik</h2>
+        <div class="card"><ol class="reflectie" id="st-reflectie"></ol></div>
+        <div class="acties"><button class="btn btn-primary" id="btn-opnieuw">Nieuw spel</button></div>
+      </div>
     </div>
   </section>
 </div>
@@ -263,6 +290,39 @@ function toon(id) { document.querySelectorAll('.screen').forEach(s => s.classLis
 function melding(tekst) { const m = $('melding'); m.textContent = tekst || ''; m.classList.toggle('zichtbaar', !!tekst); if (tekst) window.scrollTo(0, 0); }
 function fractie(id) { return st.fracties.find(f => f.id === id) || { id, naam: id, kleur: '#888', zetels: 0 }; }
 function npcFracties() { return st.fracties.filter(f => f.id !== st.sessie?.speler_fractie); }
+const SCHAAL = ['tegen', 'twijfel', 'voor'];
+function verschuivingLabel(meta) {
+  const label = (was, nu, voorvoegsel) => {
+    if (!nu || !was || nu === was) return '';
+    const richting = SCHAAL.indexOf(nu) > SCHAAL.indexOf(was) ? '' : ' terug';
+    return ` <span class="verschuiving${richting}">${voorvoegsel}${esc(was)} → ${esc(nu)}</span>`;
+  };
+  return label(meta?.houding_was, meta?.houding, '') + label(meta?.houding_amendement_was, meta?.houding_amendement, 'amendement: ');
+}
+function heeftAmendement() { return !!(st.sessie?.amendement?.tekst); }
+function amendementBadge(sp) {
+  return heeftAmendement() && sp?.houding_amendement ? `<span class="badge-am">amendement: ${esc(sp.houding_amendement)}</span>` : '';
+}
+function renderAmendementKaart(id) {
+  const el = $(id); if (!el) return;
+  const am = st.sessie.amendement;
+  const gestemd = !!am?.uitslag;
+  el.innerHTML = `<div class="kop">${am?.tekst ? 'Jouw amendement' : 'Nog geen amendement'}</div>
+    ${am?.tekst ? `<p>${esc(am.tekst)}</p>` : '<p class="hint">Wil je het raadsvoorstel wijzigen? Dien een amendement in. De raad stemt daar eerst over.</p>'}
+    ${gestemd ? '' : `<textarea rows="2" maxlength="600" placeholder="${am?.tekst ? 'Pas je amendement aan…' : 'Schrijf je amendement…'}" id="${id}-in"></textarea>
+    <div class="acties" style="margin-top:.5rem"><button class="btn btn-ghost" id="${id}-btn">${am?.tekst ? 'Amendement aanpassen' : 'Amendement indienen'}</button>
+    ${am?.tekst ? `<button class="btn btn-ghost" id="${id}-weg">Intrekken</button>` : ''}</div>`}`;
+  const opslaan = async (tekst) => {
+    const r = await api('/api/sp-sessie', { actie: 'amendement', sessie_id: st.sessie.id, tekst });
+    if (!r.ok) { melding(foutTekst(r)); return; }
+    melding('');
+    st.sessie.amendement = r.data.sessie.amendement;
+    ['cm-amendement', 'oh-amendement'].forEach(renderAmendementKaart);
+    if ($('s-commissie').classList.contains('active')) npcFracties().forEach(f => renderFractieKaart(f.id));
+  };
+  const b = $(id + '-btn'); if (b) b.onclick = () => { const v = $(id + '-in').value.trim(); if (v) opslaan(v); };
+  const w = $(id + '-weg'); if (w) w.onclick = () => opslaan('');
+}
 function houdingBadge(h) { return h ? `<span class="badge b-${esc(h)}">${h === 'twijfel' ? 'twijfelt' : esc(h)}</span>` : ''; }
 
 const REDENEN = {
@@ -369,7 +429,7 @@ async function toonStart() {
   $('hervat-lijst').querySelectorAll('[data-hervat]').forEach(b => b.onclick = () => laadSessie(b.dataset.hervat));
 
   $('dossier-lijst').innerHTML = st.dossiers.map(d =>
-    `<button class="keuze" data-dossier="${esc(d.id)}"><div class="naam">${esc(d.titel)}</div><div class="omschr">${esc(d.inhoud?.pitch || '')}</div></button>`).join('');
+    `<button class="keuze" data-dossier="${esc(d.id)}"><div class="meta">${esc(d.inhoud?.domein || '')}</div><div class="naam">${esc(d.titel)}</div><div class="omschr">${esc(d.inhoud?.pitch || '')}</div></button>`).join('');
   $('fractie-lijst').innerHTML = st.fracties.map(f =>
     `<button class="keuze" data-fractie="${esc(f.id)}"><div class="naam"><span class="dot" style="background:${esc(f.kleur)}"></span>${esc(f.naam)}</div>
      <div class="meta">${f.zetels} zetels · ${esc(f.positie)}</div><div class="omschr">${esc(f.profiel?.waarden || '')}</div></button>`).join('');
@@ -434,7 +494,7 @@ function renderFractieoverleg() {
 }
 $('btn-inbreng').onclick = async () => {
   const btn = $('btn-inbreng'); btn.disabled = true; btn.textContent = 'Bezig…';
-  const r = await api('/api/sp-sessie', { actie: 'inbreng', sessie_id: st.sessie.id, positie: st.positie, inbreng: $('fo-inbreng').value });
+  const r = await api('/api/sp-sessie', { actie: 'inbreng', sessie_id: st.sessie.id, positie: st.positie, inbreng: $('fo-inbreng').value, amendement: $('fo-amendement').value });
   btn.textContent = 'Inbreng indienen →';
   if (!r.ok) { btn.disabled = false; melding(foutTekst(r)); return; }
   melding('');
@@ -451,6 +511,7 @@ function renderCommissie() {
   const eigen = fractie(st.sessie.speler_fractie);
   $('cm-eigen').style.borderLeftColor = eigen.kleur;
   $('cm-eigen').innerHTML = `<div class="fractie-kop"><span class="naam">${esc(eigen.naam)} — jouw fractie</span><span class="meta">${eigen.zetels} zetels</span>${houdingBadge(st.sessie.speler_positie)}</div><p>${esc(st.sessie.speler_inbreng)}</p>`;
+  renderAmendementKaart('cm-amendement');
   $('cm-fracties').innerHTML = npcFracties().map(f => `<div class="card fractie" id="cm-${esc(f.id)}" style="border-left-color:${esc(f.kleur)}"></div>`).join('');
   npcFracties().forEach(f => renderFractieKaart(f.id));
   updateCommissieKnoppen();
@@ -461,7 +522,7 @@ function renderCommissie() {
 function renderFractieKaart(id) {
   const f = fractie(id), sp = standpunt(id), el = $('cm-' + id);
   if (!el) return;
-  const kop = `<div class="fractie-kop"><span class="dot" style="background:${esc(f.kleur)}"></span><span class="naam">${esc(f.naam)}</span><span class="meta">${f.zetels} zetels · ${esc(f.positie)}</span>${sp ? houdingBadge(sp.houding) : ''}</div>`;
+  const kop = `<div class="fractie-kop"><span class="dot" style="background:${esc(f.kleur)}"></span><span class="naam">${esc(f.naam)}</span><span class="meta">${f.zetels} zetels · ${esc(f.positie)}</span>${sp ? houdingBadge(sp.houding) : ''}${amendementBadge(sp)}</div>`;
   if (!sp) {
     el.innerHTML = kop + (st.bezig.has('open:' + id)
       ? `<p class="laden">${esc(f.naam)} bereidt een reactie voor…</p>`
@@ -475,7 +536,7 @@ function renderFractieKaart(id) {
   const max = st.sessie.caps.max_vragen_per_fractie;
   const qa = vragen.map(b => b.rol === 'speler'
     ? `<div class="v">Jij: ${esc(b.tekst)}</div>`
-    : `<div class="a">${esc(b.tekst)}${b.meta?.fallback ? ' <span class="gescript">· standaardantwoord</span>' : ''}</div>`).join('');
+    : `<div class="a">${esc(b.tekst)}${verschuivingLabel(b.meta)}${b.meta?.fallback ? ' <span class="gescript">· standaardantwoord</span>' : ''}</div>`).join('');
   const kanVragen = gesteld < max && st.sessie.fase === 'commissie';
   el.innerHTML = kop +
     `<p>${esc(sp.tekst)}${ob?.meta?.fallback ? ' <span class="gescript">· standaardantwoord</span>' : ''}</p>` +
@@ -501,7 +562,7 @@ async function haalOpening(id) {
   st.bezig.delete('open:' + id);
   if (r.ok) {
     const a = r.data.antwoord;
-    st.sessie.standpunten = { ...st.sessie.standpunten, [id]: { houding: a.houding, voorwaarde: a.voorwaarde, tekst: a.tekst } };
+    st.sessie.standpunten = { ...st.sessie.standpunten, [id]: { houding: a.houding, voorwaarde: a.voorwaarde, tekst: a.tekst, ...(a.houding_amendement ? { houding_amendement: a.houding_amendement } : {}) } };
     st.berichten.push({ rol: 'npc', soort: 'opening', fractie_id: id, tekst: a.tekst, meta: { fallback: r.data.fallback } });
   } else if (r.data?.reden === 'al_geopend') {
     // al opgevraagd in een ander tabblad: sessie verversen
@@ -536,8 +597,13 @@ async function stelVraag(id, tekst) {
   const r = await api('/api/npc-fractie', { sessie_id: st.sessie.id, soort: 'vraag', fractie_id: id, tekst });
   st.bezig.delete('vraag:' + id);
   if (r.ok) {
+    const a = r.data.antwoord;
     st.sessie.vragen = { ...st.sessie.vragen, [id]: (st.sessie.vragen?.[id] || 0) + 1 };
-    st.berichten.push({ rol: 'npc', soort: 'vraag', fractie_id: id, tekst: r.data.antwoord.tekst, meta: { fallback: r.data.fallback } });
+    st.berichten.push({ rol: 'npc', soort: 'vraag', fractie_id: id, tekst: a.tekst, meta: { fallback: r.data.fallback, houding: a.houding, houding_was: a.houding_was, houding_amendement: a.houding_amendement, houding_amendement_was: a.houding_amendement_was } });
+    if (!r.data.fallback && a.houding) {
+      st.sessie.standpunten = { ...st.sessie.standpunten, [id]: { ...st.sessie.standpunten[id], houding: a.houding, voorwaarde: a.voorwaarde,
+        ...(a.houding_amendement ? { houding_amendement: a.houding_amendement } : {}) } };
+    }
   } else {
     st.berichten.pop(); // vraag niet verwerkt
     if (r.data?.reden === 'vragencap') st.sessie.vragen = { ...st.sessie.vragen, [id]: st.sessie.caps.max_vragen_per_fractie };
@@ -549,92 +615,127 @@ $('btn-naar-onderhandeling').onclick = () => naarFase('onderhandeling');
 $('btn-direct-stemming').onclick = () => naarFase('stemming');
 
 // ── ONDERHANDELING ──
+// Per bericht kiest de speler 1–2 fracties; wisselen mag. Alleen het totaal
+// aantal berichten is begrensd (server bewaakt dit ook).
+function beurtenOver() { return st.sessie.caps.max_onderhandeling_beurten - (st.sessie.onderhandeling?.beurten || 0); }
+function akkoordStatus(id) {
+  const v = st.sessie.onderhandeling?.akkoord?.[id];
+  const gesproken = (st.sessie.onderhandeling?.fracties || []).includes(id);
+  if (v === true) return '<span class="akkoord-chip ja">akkoord</span>';
+  if (v === false) return '<span class="akkoord-chip nee">geen akkoord</span>';
+  return gesproken ? '<span class="akkoord-chip">in gesprek</span>' : '';
+}
 function renderOnderhandeling() {
-  const oh = st.sessie.onderhandeling;
-  const max = st.sessie.caps.max_onderhandeling_fracties;
-  if (!oh) {
-    $('oh-kiezen').style.display = ''; $('oh-gesprek').style.display = 'none';
-    $('oh-fractiekeuze').innerHTML = npcFracties().map(f => {
-      const sp = standpunt(f.id);
-      return `<button class="keuze" data-oh="${esc(f.id)}"><div class="naam"><span class="dot" style="background:${esc(f.kleur)}"></span>${esc(f.naam)} ${sp ? houdingBadge(sp.houding) : ''}</div>
-        <div class="meta">${f.zetels} zetels · ${esc(f.positie)}</div>${sp?.voorwaarde ? `<div class="omschr">Wil: ${esc(sp.voorwaarde)}</div>` : ''}</button>`;
-    }).join('');
-    const sync = () => {
-      document.querySelectorAll('[data-oh]').forEach(b => b.classList.toggle('selected', st.ohKeuze.includes(b.dataset.oh)));
-      $('oh-gesprek').style.display = st.ohKeuze.length ? '' : 'none';
-      $('oh-akkoord').innerHTML = ''; $('oh-chat').innerHTML = '';
-      $('oh-over').textContent = st.sessie.caps.max_onderhandeling_beurten;
-      checkStuur();
-    };
-    document.querySelectorAll('[data-oh]').forEach(b => b.onclick = () => {
-      const id = b.dataset.oh;
-      if (st.ohKeuze.includes(id)) st.ohKeuze = st.ohKeuze.filter(x => x !== id);
-      else if (st.ohKeuze.length < max) st.ohKeuze.push(id);
-      sync();
-    });
-    sync();
-  } else {
-    st.ohKeuze = oh.fracties;
-    $('oh-kiezen').style.display = 'none'; $('oh-gesprek').style.display = '';
-    renderGesprek();
-  }
+  $('oh-totaal').textContent = st.sessie.caps.max_onderhandeling_beurten;
+  renderAmendementKaart('oh-amendement');
+  renderOhKeuze();
+  renderGesprek();
   $('oh-invoer').oninput = checkStuur;
   checkStuur();
   toon('s-onderhandeling');
 }
-function beurtenOver() { return st.sessie.caps.max_onderhandeling_beurten - (st.sessie.onderhandeling?.beurten || 0); }
+function renderOhKeuze() {
+  const max = st.sessie.caps.max_onderhandeling_fracties;
+  $('oh-fractiekeuze').innerHTML = npcFracties().map(f => {
+    const sp = standpunt(f.id);
+    return `<button class="keuze" data-oh="${esc(f.id)}"><div class="naam"><span class="dot" style="background:${esc(f.kleur)}"></span>${esc(f.naam)} ${sp ? houdingBadge(sp.houding) : ''}</div>${amendementBadge(sp) ? `<div style="margin:2px 0">${amendementBadge(sp)}</div>` : ''}
+      <div class="meta">${f.zetels} zetels · ${esc(f.positie)}</div>${sp?.voorwaarde ? `<div class="omschr">Wil: ${esc(sp.voorwaarde)}</div>` : ''}
+      <div class="status">${akkoordStatus(f.id)}</div></button>`;
+  }).join('');
+  document.querySelectorAll('[data-oh]').forEach(b => {
+    b.classList.toggle('selected', st.ohKeuze.includes(b.dataset.oh));
+    b.onclick = () => {
+      const id = b.dataset.oh;
+      if (st.ohKeuze.includes(id)) st.ohKeuze = st.ohKeuze.filter(x => x !== id);
+      else if (st.ohKeuze.length < max) st.ohKeuze.push(id);
+      else st.ohKeuze = [...st.ohKeuze.slice(1), id];
+      renderOhKeuze(); checkStuur();
+    };
+  });
+  $('oh-aan').textContent = st.ohKeuze.length ? st.ohKeuze.map(id => fractie(id).naam).join(' en ') : '— kies hierboven een fractie —';
+}
 function checkStuur() {
   $('btn-oh-stuur').disabled = st.bezig.has('oh') || !st.ohKeuze.length || beurtenOver() <= 0 || !$('oh-invoer').value.trim();
 }
 function renderGesprek() {
-  const akk = st.sessie.onderhandeling?.akkoord || {};
-  $('oh-akkoord').innerHTML = st.ohKeuze.map(id => {
-    const v = akk[id];
-    return `<span class="akkoord-chip ${v === true ? 'ja' : v === false ? 'nee' : ''}">${esc(fractie(id).naam)}: ${v === true ? 'akkoord' : v === false ? 'geen akkoord' : 'nog open'}</span>`;
-  }).join('');
   $('oh-chat').innerHTML = st.berichten.filter(b => b.soort === 'onderhandeling').map(b => b.rol === 'speler'
-    ? `<div class="ik">${esc(b.tekst)}</div>`
-    : `<div class="zij"><div class="wie" style="color:${esc(fractie(b.fractie_id).kleur)}">${esc(fractie(b.fractie_id).naam)}</div>${esc(b.tekst)}${b.meta?.fallback ? ' <span class="gescript">· standaardantwoord</span>' : ''}</div>`).join('')
-    + (st.bezig.has('oh') ? '<p class="laden">De fracties overleggen…</p>' : '');
+    ? `<div class="ik"><div class="aan">Aan ${esc((b.meta?.fracties || []).map(id => fractie(id).naam).join(' en '))}</div>${esc(b.tekst)}</div>`
+    : `<div class="zij"><div class="wie" style="color:${esc(fractie(b.fractie_id).kleur)}">${esc(fractie(b.fractie_id).naam)}${b.meta?.akkoord === true ? ' · akkoord' : b.meta?.akkoord === false ? ' · geen akkoord' : ''}</div>${esc(b.tekst)}${b.meta?.fallback ? ' <span class="gescript">· standaardantwoord</span>' : ''}</div>`).join('')
+    + (st.bezig.has('oh') ? '<p class="laden">De fractie overlegt…</p>' : '');
   $('oh-over').textContent = beurtenOver();
   $('oh-invoer').disabled = beurtenOver() <= 0;
   if (beurtenOver() <= 0) $('oh-invoer').placeholder = 'Je berichten zijn op. Ga door naar de stemming.';
 }
 $('btn-oh-stuur').onclick = async () => {
   const tekst = $('oh-invoer').value.trim();
-  if (!tekst) return;
+  if (!tekst || !st.ohKeuze.length) return;
+  const fracties = [...st.ohKeuze];
   st.bezig.add('oh'); checkStuur();
-  st.berichten.push({ rol: 'speler', soort: 'onderhandeling', tekst });
-  $('oh-kiezen').style.display = 'none'; $('oh-gesprek').style.display = '';
+  st.berichten.push({ rol: 'speler', soort: 'onderhandeling', tekst, meta: { fracties } });
   renderGesprek();
-  const body = { sessie_id: st.sessie.id, soort: 'onderhandeling', tekst };
-  if (!st.sessie.onderhandeling) body.fracties = st.ohKeuze;
-  const r = await api('/api/npc-fractie', body, 30000);
+  const r = await api('/api/npc-fractie', { sessie_id: st.sessie.id, soort: 'onderhandeling', fracties, tekst }, 30000);
   st.bezig.delete('oh');
   if (r.ok) {
     $('oh-invoer').value = '';
-    const oh = st.sessie.onderhandeling || { fracties: st.ohKeuze, beurten: 0, akkoord: {} };
-    st.sessie.onderhandeling = { ...oh, beurten: oh.beurten + 1, akkoord: { ...oh.akkoord, ...r.data.antwoord.akkoord } };
-    r.data.antwoord.reacties.forEach(x => st.berichten.push({ rol: 'npc', soort: 'onderhandeling', fractie_id: x.fractie, tekst: x.tekst, meta: { fallback: r.data.fallback } }));
+    const oh = st.sessie.onderhandeling || { fracties: [], beurten: 0, akkoord: {} };
+    st.sessie.onderhandeling = {
+      fracties: [...new Set([...(oh.fracties || []), ...fracties])],
+      beurten: (oh.beurten || 0) + 1,
+      akkoord: { ...oh.akkoord, ...r.data.antwoord.akkoord },
+    };
+    r.data.antwoord.reacties.forEach(x => st.berichten.push({ rol: 'npc', soort: 'onderhandeling', fractie_id: x.fractie, tekst: x.tekst, meta: { fallback: r.data.fallback, akkoord: r.data.antwoord.akkoord[x.fractie] ?? null } }));
   } else {
     st.berichten.pop();
     melding(foutTekst(r));
   }
-  renderGesprek(); checkStuur();
+  renderOhKeuze(); renderGesprek(); checkStuur();
 };
 $('btn-naar-stemming').onclick = () => naarFase('stemming');
 
 // ── STEMMING ──
+function balk(el, u) {
+  const segmenten = ['voor', 'tegen'].flatMap(stem => st.fracties.filter(f => u.stemmen[f.id]?.stem === stem));
+  const eersteTegen = segmenten.findIndex(f => u.stemmen[f.id].stem === 'tegen');
+  $(el).innerHTML = segmenten.map((f, i) => `<div title="${esc(f.naam)} — ${esc(u.stemmen[f.id].stem)}" style="width:${(f.zetels / 25 * 100).toFixed(1)}%;background:${esc(f.kleur)};${u.stemmen[f.id].stem === 'tegen' ? 'opacity:.4;' : ''}${i === eersteTegen && i > 0 ? 'border-left:3px solid #fff;' : ''}"></div>`).join('');
+}
+function toonAmendementUitslag(au) {
+  $('st-am-acties').style.display = 'none';
+  $('st-am-uitslag').style.display = '';
+  $('st-am-kop').textContent = au.aangenomen ? 'Het amendement is aangenomen' : 'Het amendement is verworpen';
+  balk('st-am-balk', au);
+  $('st-am-cijfers').textContent = `${au.voor} voor · ${au.tegen} tegen — ` +
+    st.fracties.map(f => `${f.naam}: ${au.stemmen[f.id]?.stem}`).join(', ');
+  $('st-vs-titel').textContent = au.aangenomen ? '2. Stemming over het gewijzigde raadsvoorstel' : '2. Stemming over het oorspronkelijke raadsvoorstel';
+  $('st-vs-blok').style.display = '';
+}
 function renderStemming() {
+  const am = heeftAmendement();
+  $('st-am-blok').style.display = am ? '' : 'none';
+  if (am) {
+    $('st-am-tekst').textContent = st.sessie.amendement.tekst;
+    if (st.sessie.amendement.uitslag) toonAmendementUitslag(st.sessie.amendement.uitslag);
+    else { $('st-am-acties').style.display = ''; $('st-am-uitslag').style.display = 'none'; $('st-vs-blok').style.display = 'none'; }
+  } else {
+    $('st-vs-titel').textContent = 'Stemming over het raadsvoorstel';
+    $('st-vs-blok').style.display = '';
+  }
   if (st.sessie.uitslag?.stemmen) return toonUitslag(st.sessie.uitslag);
   $('st-kiezen').style.display = ''; $('st-uitslag').style.display = 'none';
-  $('st-titel').textContent = 'Hoe stemt jouw fractie?';
   st.stem = st.stem || st.sessie.speler_positie;
   const sync = () => document.querySelectorAll('#st-stem button').forEach(b => b.classList.toggle('on', b.dataset.stem === st.stem));
   document.querySelectorAll('#st-stem button').forEach(b => b.onclick = () => { st.stem = b.dataset.stem; sync(); });
   sync();
   toon('s-stemming');
 }
+$('btn-stem-am').onclick = async () => {
+  const btn = $('btn-stem-am'); btn.disabled = true; btn.textContent = 'De raad stemt…';
+  const r = await api('/api/sp-sessie', { actie: 'stem_amendement', sessie_id: st.sessie.id });
+  btn.disabled = false; btn.textContent = 'Stemming over het amendement →';
+  if (!r.ok) { melding(foutTekst(r)); return; }
+  melding('');
+  st.sessie.amendement = r.data.sessie.amendement;
+  toonAmendementUitslag(st.sessie.amendement.uitslag);
+};
 $('btn-stem').onclick = async () => {
   const btn = $('btn-stem'); btn.disabled = true; btn.textContent = 'De raad stemt…';
   const r = await api('/api/npc-fractie', { sessie_id: st.sessie.id, soort: 'stemverklaringen', speler_stem: st.stem }, 30000);
@@ -648,19 +749,18 @@ $('btn-stem').onclick = async () => {
 function toonUitslag(u) {
   $('st-kiezen').style.display = 'none'; $('st-uitslag').style.display = '';
   $('st-titel').textContent = 'De uitslag';
-  $('st-kop').textContent = u.aangenomen ? 'Het raadsvoorstel is aangenomen' : 'Het raadsvoorstel is verworpen';
-  const volgorde = ['voor', 'tegen'];
-  const segmenten = volgorde.flatMap(stem => st.fracties.filter(f => u.stemmen[f.id]?.stem === stem));
-  const eersteTegen = segmenten.findIndex(f => u.stemmen[f.id].stem === 'tegen');
-  $('st-balk').innerHTML = segmenten.map((f, i) => `<div title="${esc(f.naam)} — ${esc(u.stemmen[f.id].stem)}" style="width:${(f.zetels / 25 * 100).toFixed(1)}%;background:${esc(f.kleur)};${u.stemmen[f.id].stem === 'tegen' ? 'opacity:.4;' : ''}${i === eersteTegen && i > 0 ? 'border-left:3px solid #fff;' : ''}"></div>`).join('');
+  const gewijzigd = u.amendement?.aangenomen ? 'gewijzigde ' : '';
+  $('st-kop').textContent = u.aangenomen ? `Het ${gewijzigd}raadsvoorstel is aangenomen` : `Het ${gewijzigd}raadsvoorstel is verworpen`;
+  balk('st-balk', u);
   $('st-cijfers').textContent = `${u.voor} voor · ${u.tegen} tegen (gekleurd = voor, vaag = tegen)`;
   $('st-verklaringen').innerHTML = st.fracties.map(f => {
     const s = u.stemmen[f.id]; if (!s) return '';
     const eigen = f.id === st.sessie.speler_fractie;
     const verkl = eigen ? 'Jouw fractie.' : (u.verklaringen?.[f.id] || '');
-    const akkoord = s.reden === 'akkoord' ? ' <span class="gescript">· na akkoord met jou</span>' : '';
+    const am = u.amendement ? `<span class="gescript">amendement: ${esc(u.amendement.stemmen[f.id]?.stem)}</span><br>` : '';
+    const akkoord = s.reden === 'akkoord' || u.amendement?.stemmen[f.id]?.reden === 'akkoord' ? ' <span class="gescript">· na akkoord met jou</span>' : '';
     return `<div class="stemrij"><div class="wie"><span class="dot" style="background:${esc(f.kleur)}"></span>${esc(f.naam)} (${f.zetels})</div>
-      <div class="stem" style="color:${s.stem === 'voor' ? 'var(--success)' : 'var(--accent)'}">${esc(s.stem)}</div><div class="verkl">${esc(verkl)}${akkoord}</div></div>`;
+      <div class="stem" style="color:${s.stem === 'voor' ? 'var(--success)' : 'var(--accent)'}">${esc(s.stem)}</div><div class="verkl">${am}${esc(verkl)}${akkoord}</div></div>`;
   }).join('');
   $('st-reflectie').innerHTML = (st.dossier.inhoud.reflectievragen || []).map(q => `<li>${esc(q)}</li>`).join('');
   toon('s-stemming');

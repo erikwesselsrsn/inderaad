@@ -10,10 +10,10 @@ scenario 2 "middenweg", met beide aanpassingen van 19 november 2026
 |---|---|---|---|
 | 1. Briefing | Leest dossier, raadsvoorstel en opties | 0 | — |
 | 2. Fractieoverleg | Kiest voor/tegen en schrijft inbreng (max 600 tekens) | 0 | — |
-| 3. Commissie | Leest 6 openingsstandpunten; max **2 vragen per fractie** | 6 + 12 | Sonnet 5.5 (opening), Haiku 5.5 (vragen) |
-| 4. Onderhandeling (optioneel) | Met **1–2 fracties**, **4 berichten** | 4 | Sonnet 5.5 |
+| 3. Commissie | Leest 6 openingsstandpunten; max **2 vragen per fractie**. Een overtuigend argument kan een fractie één stap laten opschuiven (tegen ↔ twijfel ↔ voor) | 6 + 12 | Sonnet 5.5 (opening), Haiku 5.5 (vragen) |
+| 4. Onderhandeling (optioneel) | **6 berichten** in totaal; per bericht 1–2 fracties naar keuze, wisselen mag | 6 | Sonnet 5.5 |
 | 5. Stemming | Kiest eigen stem; uitslag regelgebaseerd + stemverklaringen | 1 | Sonnet 5.5 |
-| **Totaal** | | **≤ 23** | |
+| **Totaal** | | **≤ 25** | |
 
 ## Componenten
 
@@ -83,12 +83,39 @@ liggen dan al vast; het model kan ze niet veranderen.
   `calls_met_vermijdhits` in de view), maar niet opnieuw gegenereerd, want dat zou extra
   calls kosten. Gebruik dit bij de verplichte kwaliteitstoets van de 5.5-modellen.
 
+## Wijzigingen na playtest 19-11-2026
+
+- **Afgekapte antwoorden.** Vrijwel elke call liep tegen `max_tokens` aan (400/250/500/600), waardoor de JSON afgebroken werd en de speler een gescript antwoord kreeg. De fracties leken daardoor onwrikbaar. De plafonds staan nu op 900/600/1200/1500; je betaalt alleen wat het model echt schrijft. De prompts noemen een woordlimiet. Een afgekapt antwoord bij opening of vraag wordt gered tot de laatste volledige zin. `fallback_reden` vermeldt `(max_tokens)` als dat de oorzaak was.
+- **Beweeglijke fracties.** De systeemprompt maakt expliciet dat fracties zich laten overtuigen door argumenten die bij hun waarden passen. Een antwoord op een vraag kan de houding één stap verschuiven en de voorwaarde aanpassen; de server bewaakt die ene stap en slaat het nieuwe standpunt op, zodat het meetelt in de stemming. In de onderhandeling doen fracties een tegenvoorstel als een voorstel deels tegemoetkomt.
+- **Onderhandeling.** Na het eerste bericht lagen de fracties vast, waardoor je geen andere fractie meer kon benaderen. Nu kies je per bericht 1–2 fracties, en wissel je wanneer je wilt; totaal 6 berichten (was 4). Migratie `20261119220000_…` past alleen `sp_reserveer_call` aan.
+- **Kosten.** Door 2 extra onderhandelingsberichten en iets langere antwoorden: verwacht ≈ $0,06–0,08 per sessie. Caps: 28 calls / $0,15.
+
+## Amendementen (v3)
+
+- De speler kan bij de inbreng een amendement indienen, en het later aanpassen of intrekken tot de stemming erover (kaart in commissie en onderhandeling).
+- NPC's geven naast hun houding over het raadsvoorstel ook een `houding_amendement`; een vraag kan die één stap verschuiven. In de onderhandeling betekent een akkoord: "deze fractie steunt het amendement".
+- **Stemming in twee stappen**, zoals in een echte raadsvergadering: eerst over het amendement (regelgebaseerd, geen AI, via `sp-sessie` actie `stem_amendement`), daarna over het (gewijzigde) raadsvoorstel, met één Sonnet-call voor de stemverklaringen van beide stemmingen.
+- Stemregels staan in `berekenAmendementStemming` en `berekenStemming` (sp-shared.mjs). Twijfel bij het amendement: voor als de fractie in hetzelfde blok zit als de speler (coalitie/oppositie), anders tegen. Bij het voorstel: wie voor een aangenomen amendement stemde en twijfelde, stemt voor.
+
+## Dossiers (v3)
+
+Drie actieve dossiers, één per domein, met echte plaats- en projectnamen en zonder namen van personen. Cijfers met "Spelcijfer" zijn aangenomen voor het spel en moeten inhoudelijk worden gecontroleerd.
+
+| Dossier | Domein | Kern |
+|---|---|---|
+| Omgevingsplan De Banis | Ruimte en wonen | Vaststellen omgevingsplan (2027); Holten/De Liesen en spoorzones als spanningsveld |
+| Armoederegeling naar 120% | Sociaal domein | Inkomensgrens bijdrageregelingen omhoog; armoedeval, bereik, rol van kerken |
+| Geld op de plank of investeren? | Financiën | Ratio weerstandsvermogen 2,43; € 12 mln investeringsfonds vs. lastenverlichting, aula, sport, armoede |
+
+Fractieprofielen zijn aangevuld met lokale standpunten (zondagsrust SGP/CU, sport CDA, tradities GB, aula CU, asielopvang en stikstof FvD, lasten VVD, armoede PRO) en de coalitieverhoudingen. Het fictieve conceptdossier De Veldkamp staat op inactief.
+
 ## Bewuste keuzes en afwijkingen t.o.v. het voorstel
 
 | Punt | Keuze |
 |---|---|
 | Aantal NPC's | 7 fracties in de raad, 1 door de leerling gespeeld → 6 NPC's |
-| Stemverklaringen | 1 call voor alle fracties samen in plaats van 6 → totaal ≤ 23 calls (voorstel: ~22) |
+| Stemverklaringen | 1 call voor alle fracties samen in plaats van 6 |
+| Onderhandeling | 6 berichten in plaats van 4, vrij te verdelen over fracties (na playtest) |
 | Timeout | `timeout_ms` 9 s (env `NPC_TIMEOUT_MS`), veilig onder de synchrone Netlify-limiet. **Plan verifiëren.** |
 | 1-uur-cache | Wordt meegestuurd als `cache_control.ttl = "1h"`. Vraagt de API een beta-header, zet die dan via `ANTHROPIC_BETA` of schakel terug naar `NPC_CACHE_TTL=5m`. |
 | Demo-modus (scenario 1) | Nog niet gebouwd. De fallback-route is er al, dus een demo-modus is later vooral een configuratiekeuze. |
