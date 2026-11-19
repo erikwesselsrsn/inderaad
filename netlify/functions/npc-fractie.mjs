@@ -126,7 +126,7 @@ export default async (req) => {
       if (r.stop === 'max_tokens') console.warn('[npc-fractie] max_tokens bereikt', { soort, output: usage.output_tokens });
     } catch (e) {
       console.error('[npc-fractie] Claude-fout', e.message);
-      fallbackReden = 'fout: ' + e.message.slice(0, 120);
+      fallbackReden = 'fout: ' + e.message.slice(0, 300);
       antwoord = fallback;
     }
   }

@@ -99,6 +99,12 @@ export async function laadDossier(id) {
   });
 }
 
+// Modellen die een geforceerde tool_choice weigeren (bijv. als ze standaard
+// "denken"): voor die modellen sturen we tool_choice "auto". Per warme container
+// onthouden, zodat de mislukte poging maar één keer gebeurt.
+const autoToolModellen = new Set();
+export function _resetToolKeuze() { autoToolModellen.clear(); }
+
 /** Anthropic Messages API. Gooit bij fout/timeout; de aanroeper valt dan terug. */
 export async function roepClaudeAan({ model, systeem, delta, maxTokens, config }) {
   const key = env('ANTHROPIC_API_KEY');
@@ -115,20 +121,31 @@ export async function roepClaudeAan({ model, systeem, delta, maxTokens, config }
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), config.timeout_ms);
   const t0 = Date.now();
+  const verstuur = (toolChoice) => fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers,
+    signal: ctrl.signal,
+    body: JSON.stringify({
+      model,
+      max_tokens: maxTokens,
+      tools: [ANTWOORD_TOOL],
+      tool_choice: toolChoice,
+      system: [{ type: 'text', text: systeem, cache_control: cacheControl }],
+      messages: [{ role: 'user', content: delta }],
+    }),
+  });
   try {
-    const res = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers,
-      signal: ctrl.signal,
-      body: JSON.stringify({
-        model,
-        max_tokens: maxTokens,
-        tools: [ANTWOORD_TOOL],
-        tool_choice: { type: 'tool', name: ANTWOORD_TOOL.name },
-        system: [{ type: 'text', text: systeem, cache_control: cacheControl }],
-        messages: [{ role: 'user', content: delta }],
-      }),
-    });
+    let res = await verstuur(autoToolModellen.has(model) ? { type: 'auto' } : { type: 'tool', name: ANTWOORD_TOOL.name });
+    if (res.status === 400 && !autoToolModellen.has(model)) {
+      const fout = await res.text().catch(() => '');
+      if (/tool_choice/i.test(fout)) {
+        console.warn('[sp] model weigert geforceerde tool_choice, verder met auto', { model, fout: fout.slice(0, 300) });
+        autoToolModellen.add(model);
+        res = await verstuur({ type: 'auto' });
+      } else {
+        throw new Error(`Anthropic 400: ${fout.slice(0, 300)}`);
+      }
+    }
     if (!res.ok) {
       const tekst = await res.text().catch(() => '');
       throw new Error(`Anthropic ${res.status}: ${tekst.slice(0, 300)}`);

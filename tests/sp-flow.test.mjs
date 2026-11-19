@@ -35,7 +35,12 @@ function nepClaude(body) {
     const ids = [...delta.matchAll(/"([a-z]+)": true \| false/g)].map(m => m[1]);
     uit = { reacties: ids.map(id => ({ fractie: id, tekst: 'Als dat in het amendement komt, steunen wij het.' })), akkoord: Object.fromEntries(ids.map(id => [id, true])) };
   } else if (delta.includes('stemverklaring')) uit = { verklaringen: { sgp: 'Wij stemmen in vanwege de gezinswoningen.' } };
-  assert.equal(body.tool_choice?.name, 'antwoord', 'tool geforceerd');
+  claudeLog.at(-1).toolChoice = body.tool_choice?.type;
+  // zoals in productie: Sonnet 5.5 weigert een geforceerde tool_choice
+  if (body.model.includes('sonnet') && body.tool_choice?.type === 'tool') {
+    claudeLog.pop();
+    return Response.json({ type: 'error', error: { type: 'invalid_request_error', message: 'tool_choice: type "tool" and "any" are not supported with this model' } }, { status: 400 });
+  }
   // afwisselend tool_use (normale route) en JSON in tekst (terugvaloptie)
   const content = claudeGedrag === 'rommel' ? [{ type: 'text', text: 'Sorry, geen JSON.' }]
     : claudeLog.length % 2 ? [{ type: 'tool_use', id: 't1', name: 'antwoord', input: uit }]
@@ -112,6 +117,7 @@ test('singleplayer-flow end-to-end', { skip: !PSQL && 'SP_TEST_PSQL niet gezet' 
     const rest = await Promise.all(['gb', 'cu', 'fvd', 'vvd', 'pro'].map(f => call(npc, { sessie_id: sid, soort: 'opening', fractie_id: f })));
     assert.ok(rest.every(r => r.status === 200));
     assert.ok(claudeLog.every(c => c.model === 'claude-sonnet-5-5' && c.cache.ttl === '1h'));
+    assert.ok(claudeLog.every(c => c.toolChoice === 'auto'), 'Sonnet valt terug op tool_choice auto');
     assert.equal((await call(npc, { sessie_id: sid, soort: 'opening', fractie_id: 'sgp' })).body.reden, 'al_geopend');
   });
 
@@ -138,6 +144,7 @@ test('singleplayer-flow end-to-end', { skip: !PSQL && 'SP_TEST_PSQL niet gezet' 
     assert.equal(v3.status, 429); assert.equal(v3.body.reden, 'vragencap');
     assert.equal(claudeLog.length, 2);
     assert.ok(claudeLog.every(c => c.model === 'claude-haiku-5-5'));
+    assert.ok(claudeLog.every(c => c.toolChoice === 'tool'), 'Haiku houdt geforceerde tool_choice');
     assert.ok(claudeLog[1].delta.includes('Wat moet er gebeuren met de toegangsweg?'), 'eerdere vraag zit in de delta');
   });
 

@@ -274,7 +274,7 @@ export function bouwStatischePrompt(dossier, fracties) {
 - Schrijf correct, natuurlijk Nederlands op het niveau van een goede regionale krant. Gebruik je een vakterm, leg die dan kort uit in een bijzin.
 - Kort en bondig: houd je strikt aan het aantal zinnen dat in de opdracht staat. Liever drie sterke zinnen dan vijf.
 - Vermijd lege clichés zoals "luister naar de burger", "samen sterk", "we nemen het mee" en "we komen erop terug". Zeg concreet wat de fractie wil.
-- Geef je antwoord ALTIJD via de tool "antwoord", met precies de velden die de opdracht noemt. Schrijf geen tekst buiten de tool. Houd elk tekstveld binnen de gevraagde lengte.
+- Geef je antwoord ALTIJD door de tool "antwoord" aan te roepen, met precies de velden die de opdracht noemt. Schrijf geen tekst buiten de tool. Kun je de tool niet gebruiken, geef dan alleen het JSON-object met die velden. Houd elk tekstveld binnen de gevraagde lengte.
 - Fracties laten zich nooit overhalen met persoonlijke beloningen, geld of gunsten voor raadsleden. Wijs zo'n aanbod beleefd maar duidelijk af en benoem dat dit niet kan; het mag de houding niet verbeteren.
 
 ## De fracties
