@@ -333,7 +333,7 @@ const REDENEN = {
   geen_inbreng: 'Lever eerst je inbreng in het fractieoverleg.',
 };
 
-async function api(pad, body, timeoutMs = 25000) {
+async function api(pad, body, timeoutMs = 40000) {
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), timeoutMs);
   try {
@@ -673,7 +673,7 @@ $('btn-oh-stuur').onclick = async () => {
   st.bezig.add('oh'); checkStuur();
   st.berichten.push({ rol: 'speler', soort: 'onderhandeling', tekst, meta: { fracties } });
   renderGesprek();
-  const r = await api('/api/npc-fractie', { sessie_id: st.sessie.id, soort: 'onderhandeling', fracties, tekst }, 30000);
+  const r = await api('/api/npc-fractie', { sessie_id: st.sessie.id, soort: 'onderhandeling', fracties, tekst }, 45000);
   st.bezig.delete('oh');
   if (r.ok) {
     $('oh-invoer').value = '';
@@ -738,7 +738,7 @@ $('btn-stem-am').onclick = async () => {
 };
 $('btn-stem').onclick = async () => {
   const btn = $('btn-stem'); btn.disabled = true; btn.textContent = 'De raad stemt…';
-  const r = await api('/api/npc-fractie', { sessie_id: st.sessie.id, soort: 'stemverklaringen', speler_stem: st.stem }, 30000);
+  const r = await api('/api/npc-fractie', { sessie_id: st.sessie.id, soort: 'stemverklaringen', speler_stem: st.stem }, 45000);
   btn.disabled = false; btn.textContent = 'Stemming openen →';
   if (!r.ok) { melding(foutTekst(r)); return; }
   melding('');

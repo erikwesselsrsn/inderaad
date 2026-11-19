@@ -3,7 +3,7 @@
  * Supabase-auth, PostgREST/RPC-calls met de service role, config laden,
  * en de Anthropic-call zelf. Geen SDK-afhankelijkheden (alleen fetch).
  */
-import { DEFAULT_CONFIG, mergeConfig, configUitEnv } from './sp-shared.mjs';
+import { DEFAULT_CONFIG, mergeConfig, configUitEnv, ANTWOORD_TOOL } from './sp-shared.mjs';
 
 export function json(status, body) {
   return new Response(JSON.stringify(body), {
@@ -123,6 +123,8 @@ export async function roepClaudeAan({ model, systeem, delta, maxTokens, config }
       body: JSON.stringify({
         model,
         max_tokens: maxTokens,
+        tools: [ANTWOORD_TOOL],
+        tool_choice: { type: 'tool', name: ANTWOORD_TOOL.name },
         system: [{ type: 'text', text: systeem, cache_control: cacheControl }],
         messages: [{ role: 'user', content: delta }],
       }),
@@ -133,7 +135,9 @@ export async function roepClaudeAan({ model, systeem, delta, maxTokens, config }
     }
     const data = await res.json();
     const tekst = (data.content || []).filter(b => b.type === 'text').map(b => b.text).join('');
-    return { tekst, usage: data.usage || {}, latency: Date.now() - t0, stop: data.stop_reason };
+    const tool = (data.content || []).find(b => b.type === 'tool_use' && b.name === ANTWOORD_TOOL.name);
+    const invoer = tool && tool.input && typeof tool.input === 'object' && Object.keys(tool.input).length ? tool.input : null;
+    return { tekst, invoer, usage: data.usage || {}, latency: Date.now() - t0, stop: data.stop_reason };
   } catch (e) {
     if (e.name === 'AbortError') throw new Error(`timeout na ${config.timeout_ms} ms`);
     throw e;

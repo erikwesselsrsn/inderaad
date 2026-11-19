@@ -109,13 +109,19 @@ export default async (req) => {
         config,
       });
       usage = r.usage; latency = r.latency;
-      let parsed = parseJsonUitTekst(r.tekst);
+      // 1. tool input (normale route)  2. JSON in tekst  3. afgekapte tekst redden
+      let parsed = r.invoer || parseJsonUitTekst(r.tekst);
       let gered = false;
       if (!parsed && (soort === 'opening' || soort === 'vraag')) { parsed = redAfgekapteJson(r.tekst); gered = !!parsed; }
       antwoord = normaliseerAntwoord(soort, parsed, fallback, {
         fractieIds: onderhFracties, laatsteBeurt, huidig: sessie.standpunten?.[fractieId], metAmendement: heeftAmendement(sessie),
       });
-      if (antwoord._parseFout) fallbackReden = 'parse' + (r.stop === 'max_tokens' ? ' (max_tokens)' : '');
+      if (antwoord._parseFout) {
+        // eerste stuk van de ruwe output bewaren voor diagnose (geen persoonsgegevens: alleen NPC-tekst)
+        const ruw = (r.invoer ? JSON.stringify(r.invoer) : r.tekst || '').replace(/\s+/g, ' ').slice(0, 160);
+        fallbackReden = 'parse' + (r.stop === 'max_tokens' ? ' (max_tokens)' : '') + ': ' + ruw;
+        console.warn('[npc-fractie] onbruikbare output', { soort, stop: r.stop, ruw });
+      }
       else if (gered) console.warn('[npc-fractie] afgekapt antwoord gered', { soort, stop: r.stop });
       if (r.stop === 'max_tokens') console.warn('[npc-fractie] max_tokens bereikt', { soort, output: usage.output_tokens });
     } catch (e) {

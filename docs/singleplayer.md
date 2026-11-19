@@ -106,8 +106,17 @@ Drie actieve dossiers, één per domein, met echte plaats- en projectnamen en zo
 | Omgevingsplan De Banis | Ruimte en wonen | Vaststellen omgevingsplan (2027); Holten/De Liesen en spoorzones als spanningsveld |
 | Armoederegeling naar 120% | Sociaal domein | Inkomensgrens bijdrageregelingen omhoog; armoedeval, bereik, rol van kerken |
 | Geld op de plank of investeren? | Financiën | Ratio weerstandsvermogen 2,43; € 12 mln investeringsfonds vs. lastenverlichting, aula, sport, armoede |
+| Zondag in Holten: eerder open? | Algemene zaken | Supermarkten willen eerder dan 13.00 uur open; coalitieakkoord: status quo |
 
 Fractieprofielen zijn aangevuld met lokale standpunten (zondagsrust SGP/CU, sport CDA, tradities GB, aula CU, asielopvang en stikstof FvD, lasten VVD, armoede PRO) en de coalitieverhoudingen. Het fictieve conceptdossier De Veldkamp staat op inactief.
+
+## Wijzigingen na playtest 2 (19-11-2026, avond)
+
+- **Gestructureerde output via tool use.** Alle calls gebruiken één gedeelde tool `antwoord` met `tool_choice` geforceerd, zodat het model altijd een JSON-object teruggeeft zonder tekst eromheen. Eén schema voor alle soorten, omdat tools vóór de system prompt in de cache-prefix staan. Als terugval wordt JSON in tekst nog steeds herkend.
+- **Time-out 25 s** (was 9 s): Netlify staat 60 s toe voor synchrone functions; onderhandeling en stemverklaringen haalden de 9 s niet altijd.
+- **Vraag-plafond 1000 tokens** (Haiku): in playtest 2 liepen alle vragen tegen 600 aan. Bij onbruikbare output staat nu het begin van de ruwe output in `sp_tokenlog.fallback_reden`, voor diagnose.
+- **Omkoping:** de systeemprompt zegt expliciet dat fracties persoonlijke beloningen afwijzen (bleek in de playtest al zo te werken).
+- **Vierde dossier:** "Zondag in Holten: eerder open?" (algemene zaken) — coalitieakkoord versus vraag van supermarkten; CU deelt het principe van de SGP.
 
 ## Bewuste keuzes en afwijkingen t.o.v. het voorstel
 
@@ -116,7 +125,7 @@ Fractieprofielen zijn aangevuld met lokale standpunten (zondagsrust SGP/CU, spor
 | Aantal NPC's | 7 fracties in de raad, 1 door de leerling gespeeld → 6 NPC's |
 | Stemverklaringen | 1 call voor alle fracties samen in plaats van 6 |
 | Onderhandeling | 6 berichten in plaats van 4, vrij te verdelen over fracties (na playtest) |
-| Timeout | `timeout_ms` 9 s (env `NPC_TIMEOUT_MS`), veilig onder de synchrone Netlify-limiet. **Plan verifiëren.** |
+| Timeout | `timeout_ms` 25 s (env `NPC_TIMEOUT_MS`); Netlify-limiet voor synchrone functions is 60 s. |
 | 1-uur-cache | Wordt meegestuurd als `cache_control.ttl = "1h"`. Vraagt de API een beta-header, zet die dan via `ANTHROPIC_BETA` of schakel terug naar `NPC_CACHE_TTL=5m`. |
 | Demo-modus (scenario 1) | Nog niet gebouwd. De fallback-route is er al, dus een demo-modus is later vooral een configuratiekeuze. |
 

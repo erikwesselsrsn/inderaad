@@ -28,11 +28,11 @@ export const DEFAULT_CONFIG = {
     'claude-haiku-5-5': { input: 0.10, output: 0.50, cache_read: 0.01, cache_write_5m: 0.125, cache_write_1h: 0.20 },
   },
   cache_ttl: '1h',          // '1h' of '5m'
-  timeout_ms: 9000,         // onder de synchrone Netlify-limiet blijven (plan-afhankelijk!)
+  timeout_ms: 25000,        // Netlify staat 60 s toe voor synchrone functions; 9 s bleek te krap (playtest 19-11)
   // Plafond per antwoord. Ruim gekozen: het is een bovengrens, je betaalt alleen
   // wat het model echt schrijft. Te krap = afgekapte JSON = gescript antwoord
   // (playtest 19-11: vrijwel alle calls liepen tegen 400/250/500/600 aan).
-  max_tokens: { opening: 900, vraag: 600, onderhandeling: 1200, stemverklaringen: 1500 },
+  max_tokens: { opening: 900, vraag: 1000, onderhandeling: 1200, stemverklaringen: 1500 },
   caps: {
     max_calls: 28,                   // 6 openingen + 12 vragen + 6 onderhandeling + 1 stemming = 25, plus marge
     max_kosten_usd: 0.15,            // ~2x de verwachte $0,06–0,08 per sessie
@@ -45,6 +45,33 @@ export const DEFAULT_CONFIG = {
 };
 
 export const SOORTEN = ['opening', 'vraag', 'onderhandeling', 'stemverklaringen'];
+
+/**
+ * Eén gedeelde tool voor álle soorten beurten. Met tool_choice geforceerd
+ * levert het model altijd een JSON-object (tool input), zonder tekst eromheen.
+ * Bewust één schema voor alle soorten: tools staan vóór de system prompt in
+ * de cache-prefix, dus verschillende tools per soort zouden de cache breken.
+ */
+export const ANTWOORD_TOOL = {
+  name: 'antwoord',
+  description: 'Geef het antwoord van de fractie(s). Vul alleen de velden in die de opdracht vraagt.',
+  input_schema: {
+    type: 'object',
+    properties: {
+      tekst: { type: 'string', description: 'Wat de fractie zegt (opening of antwoord op een vraag). Kort, binnen de gevraagde lengte.' },
+      houding: { type: 'string', enum: ['voor', 'tegen', 'twijfel'], description: 'Houding over het raadsvoorstel.' },
+      houding_amendement: { type: 'string', enum: ['voor', 'tegen', 'twijfel'], description: 'Houding over het amendement, alleen als er een amendement is.' },
+      voorwaarde: { type: ['string', 'null'], description: 'Wat de fractie nodig heeft om (meer) te steunen, in één zin.' },
+      reacties: {
+        type: 'array',
+        description: 'Onderhandeling: per fractie aan tafel één reactie.',
+        items: { type: 'object', properties: { fractie: { type: 'string' }, tekst: { type: 'string' } }, required: ['fractie', 'tekst'] },
+      },
+      akkoord: { type: 'object', description: 'Onderhandeling: per fractie-id true, false of null.', additionalProperties: { type: ['boolean', 'null'] } },
+      verklaringen: { type: 'object', description: 'Stemming: per fractie-id een stemverklaring.', additionalProperties: { type: 'string' } },
+    },
+  },
+};
 
 /** Welk modelniveau per soort beurt (hybride inzet, aanpassing 2). */
 export const ROUTERING = {
@@ -247,7 +274,8 @@ export function bouwStatischePrompt(dossier, fracties) {
 - Schrijf correct, natuurlijk Nederlands op het niveau van een goede regionale krant. Gebruik je een vakterm, leg die dan kort uit in een bijzin.
 - Kort en bondig: houd je strikt aan het aantal zinnen dat in de opdracht staat. Liever drie sterke zinnen dan vijf.
 - Vermijd lege clichés zoals "luister naar de burger", "samen sterk", "we nemen het mee" en "we komen erop terug". Zeg concreet wat de fractie wil.
-- Antwoord ALTIJD uitsluitend met één JSON-object in het formaat dat de opdracht vraagt: begin direct met { en eindig met }. Geen uitleg, geen codeblok, geen tekst ervoor of erna.
+- Geef je antwoord ALTIJD via de tool "antwoord", met precies de velden die de opdracht noemt. Schrijf geen tekst buiten de tool. Houd elk tekstveld binnen de gevraagde lengte.
+- Fracties laten zich nooit overhalen met persoonlijke beloningen, geld of gunsten voor raadsleden. Wijs zo'n aanbod beleefd maar duidelijk af en benoem dat dit niet kan; het mag de houding niet verbeteren.
 
 ## De fracties
 De coalitie bestaat uit SGP, CDA en Gemeentebelang (16 van de 25 zetels); ChristenUnie, FvD, VVD en PRO vormen de oppositie. Coalitiefracties zijn gebonden aan het coalitieakkoord, maar hebben elk hun eigen accenten.
@@ -305,7 +333,7 @@ ${spelerRegel(sessie, fracties)}
 
 Opdracht: geef het openingsstandpunt van de fractie ${fractieNaam(fracties, fractieId)} over het raadsvoorstel, in maximaal 4 zinnen (samen hooguit 90 woorden). Reageer waar logisch kort op de inbreng van de leerling, maar blijf bij de eigen waarden van deze fractie. Je mag van de startneiging afwijken als de inbreng daar een goede reden voor geeft. Kies "twijfel" als de fractie te overtuigen is met een concrete aanpassing.
 
-Antwoord als JSON:
+Velden voor de tool "antwoord":
 {"tekst": "...", "houding": "voor" | "tegen" | "twijfel"${AM_VELD(sessie)}, "voorwaarde": "wat deze fractie concreet nodig heeft om (meer) te steunen, in één zin, of null"}
 "houding" gaat over het raadsvoorstel${heeftAmendement(sessie) ? '; "houding_amendement" over het amendement van de leerling' : ''}.`;
   }
@@ -327,7 +355,7 @@ Opdracht: beantwoord de vraag namens ${fractieNaam(fracties, fractieId)} in maxi
 - Is het niet overtuigend, leg dan uit wat er nog ontbreekt; de houding blijft dan gelijk.
 - Gaat de vraag niet over het dossier, buig dan beleefd terug naar het dossier.
 
-Antwoord als JSON:
+Velden voor de tool "antwoord":
 {"tekst": "...", "houding": "voor" | "tegen" | "twijfel"${AM_VELD(sessie)}, "voorwaarde": "wat de fractie nu nog nodig heeft, in één zin, of null"}`;
   }
 
@@ -354,7 +382,7 @@ Opdracht: reageer namens elke fractie aan tafel apart, maximaal 3 zinnen per fra
 - Een fractie gaat niet akkoord met iets dat recht tegen haar kernwaarden ingaat, of met beloftes zonder inhoud.
 - ${heeftAmendement(sessie) ? '"true" betekent: deze fractie steunt het amendement van de leerling en stemt ervoor.' : `"true" betekent: deze fractie stemt mee met de leerling (${sessie.speler_positie || 'zijn positie'} het raadsvoorstel).`} ${laatste ? 'Dit is het laatste bericht van de leerling: geef per fractie een definitief true of false.' : ''}
 
-Antwoord als JSON:
+Velden voor de tool "antwoord":
 {"reacties": [{"fractie": "<id>", "tekst": "..."}], "akkoord": {${ids.map(id => `"${id}": true | false${laatste ? '' : ' | null'}`).join(', ')}}}`;
   }
 
@@ -377,7 +405,7 @@ ${amRegel}${uitslag.voor} stemmen voor, ${uitslag.tegen} tegen. Het raadsvoorste
 
 Opdracht: geef per fractie hierboven één stemverklaring van maximaal 2 zinnen (hooguit 45 woorden) die past bij haar standpunt en het verloop${am ? ', en die waar dat logisch is beide stemmingen kort verklaart' : ''}.
 
-Antwoord als JSON:
+Velden voor de tool "antwoord":
 {"verklaringen": {"<fractie-id>": "..."}}`;
   }
 

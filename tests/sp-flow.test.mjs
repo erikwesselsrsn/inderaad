@@ -35,9 +35,13 @@ function nepClaude(body) {
     const ids = [...delta.matchAll(/"([a-z]+)": true \| false/g)].map(m => m[1]);
     uit = { reacties: ids.map(id => ({ fractie: id, tekst: 'Als dat in het amendement komt, steunen wij het.' })), akkoord: Object.fromEntries(ids.map(id => [id, true])) };
   } else if (delta.includes('stemverklaring')) uit = { verklaringen: { sgp: 'Wij stemmen in vanwege de gezinswoningen.' } };
-  const tekst = claudeGedrag === 'rommel' ? 'Sorry, geen JSON.' : '```json\n' + JSON.stringify(uit) + '\n```';
+  assert.equal(body.tool_choice?.name, 'antwoord', 'tool geforceerd');
+  // afwisselend tool_use (normale route) en JSON in tekst (terugvaloptie)
+  const content = claudeGedrag === 'rommel' ? [{ type: 'text', text: 'Sorry, geen JSON.' }]
+    : claudeLog.length % 2 ? [{ type: 'tool_use', id: 't1', name: 'antwoord', input: uit }]
+    : [{ type: 'text', text: '```json\n' + JSON.stringify(uit) + '\n```' }];
   return Response.json({
-    content: [{ type: 'text', text: tekst }], stop_reason: 'end_turn',
+    content, stop_reason: content[0].type === 'tool_use' ? 'tool_use' : 'end_turn',
     usage: { input_tokens: 400, cache_creation_input_tokens: claudeLog.length === 1 ? 2100 : 0, cache_read_input_tokens: claudeLog.length === 1 ? 0 : 2100, output_tokens: 150 },
   });
 }
@@ -243,6 +247,6 @@ test('singleplayer-flow end-to-end', { skip: !PSQL && 'SP_TEST_PSQL niet gezet' 
     const r = await call(npc, { sessie_id: s3, soort: 'opening', fractie_id: 'fvd' });
     claudeGedrag = 'ok';
     assert.equal(r.body.fallback, true);
-    assert.equal(sql(`select to_json(fallback_reden) from sp_tokenlog where sessie_id = '${s3}'`), 'parse');
+    assert.match(sql(`select to_json(fallback_reden) from sp_tokenlog where sessie_id = '${s3}'`), /^parse: Sorry, geen JSON\./);
   });
 });
